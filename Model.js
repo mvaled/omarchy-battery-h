@@ -312,6 +312,62 @@ function appendCharge(list, entry, windowSec, now) {
     : pruned
 }
 
+// Rows older than a week are compacted. At one heartbeat every six hours, two
+// years of an untouched battery is 2920 rows against a plot about 500 pixels
+// wide — six points per pixel, rebuilt on every hover repaint, to draw a line
+// whose shape a hundred points describe exactly as well.
+//
+// What survives is chosen so the compacted curve is not an approximation of the
+// full one but an exact record of it: capacity only changes at discrete moments,
+// so keeping both sides of every change preserves the value *and* the moment it
+// moved, and a month with no change is fully described by any single reading
+// from it.
+var HEALTH_FULL_DETAIL_SEC = 7 * DAY_SEC
+
+function healthMoved(a, b) {
+  return a.full !== b.full || a.design !== b.design
+}
+
+// Local calendar month, matching dayStart's local-time convention.
+function monthKey(epoch) {
+  var date = new Date(epoch * 1000)
+  return date.getFullYear() + "-" + date.getMonth()
+}
+
+function compactHealth(list, now, fullDetailSec) {
+  var entries = Array.isArray(list) ? list : []
+  if (entries.length < 3) return entries
+
+  var detail = fullDetailSec === undefined ? HEALTH_FULL_DETAIL_SEC : fullDetailSec
+  var boundary = now - Math.max(DAY_SEC, detail)
+  var older = entries.filter(function (entry) { return entry.t < boundary })
+  var recent = entries.filter(function (entry) { return entry.t >= boundary })
+  if (older.length < 3) return entries
+
+  // Both sides of every movement: the last reading at the old value and the
+  // first at the new one, which is what pins down when the change happened.
+  var keep = {}
+  var movedMonths = {}
+  older.forEach(function (entry, index) {
+    if (index > 0 && healthMoved(older[index - 1], entry)) {
+      keep[index - 1] = true
+      keep[index] = true
+      movedMonths[monthKey(older[index - 1].t)] = true
+      movedMonths[monthKey(entry.t)] = true
+    }
+  })
+
+  // A quiet month contributes its last reading, so a long flat stretch still
+  // anchors the curve instead of disappearing from it.
+  var lastOfMonth = {}
+  older.forEach(function (entry, index) { lastOfMonth[monthKey(entry.t)] = index })
+  Object.keys(lastOfMonth).forEach(function (month) {
+    if (!movedMonths[month]) keep[lastOfMonth[month]] = true
+  })
+
+  return older.filter(function (entry, index) { return keep[index] }).concat(recent)
+}
+
 // A probe folded into the stored history. Returns a fresh state object so the
 // QML side can assign it in one go and let property bindings re-evaluate.
 function recordProbe(state, probe, options) {
@@ -329,13 +385,15 @@ function recordProbe(state, probe, options) {
   var charge = replaced ? [] : state.charge
   var reading = { t: now, full: probe.full, design: probe.design, cyc: probe.cycles }
 
+  var nextHealth = shouldRecordHealth(health, reading, num(opts.healthHeartbeatSec, HEALTH_HEARTBEAT_SEC))
+    ? appendHealth(health, reading, retentionDays, now)
+    : health
+
   return {
     v: SCHEMA,
     battery: probe.battery,
     unit: probe.unit,
-    health: shouldRecordHealth(health, reading, num(opts.healthHeartbeatSec, HEALTH_HEARTBEAT_SEC))
-      ? appendHealth(health, reading, retentionDays, now)
-      : health,
+    health: compactHealth(nextHealth, now, num(opts.healthDetailSec, HEALTH_FULL_DETAIL_SEC)),
     charge: probe.pct < 0 ? charge : appendCharge(charge, {
       t: now,
       p: probe.pct,
@@ -725,6 +783,8 @@ if (typeof module !== "undefined") {
     HEALTH_HEARTBEAT_SEC: HEALTH_HEARTBEAT_SEC,
     shouldRecordHealth: shouldRecordHealth,
     appendHealth: appendHealth,
+    compactHealth: compactHealth,
+    HEALTH_FULL_DETAIL_SEC: HEALTH_FULL_DETAIL_SEC,
     sampleIntervalFor: sampleIntervalFor,
     appendCharge: appendCharge,
     recordProbe: recordProbe,

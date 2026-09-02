@@ -580,7 +580,7 @@ Panel {
         anchors.top: parent.top
         spacing: Style.space(14)
 
-        // ---------- Hero: glyph · pack identity · health percentage ----------
+        // ---------- Hero: glyph · title/status · charge level ----------
         Item {
           width: parent.width
           implicitHeight: Math.max(heroIcon.implicitHeight, heroLabels.implicitHeight, heroValue.implicitHeight)
@@ -589,7 +589,7 @@ Panel {
             id: heroIcon
             textFormat: Text.PlainText
             text: Model.batteryGlyph(root.probe)
-            color: root.healthColor
+            color: root.fg
             font.family: root.fontFamily
             font.pixelSize: Style.font.display
             anchors.left: parent.left
@@ -606,7 +606,7 @@ Panel {
             spacing: Style.space(2)
 
             Text {
-              text: "Battery health"
+              text: "Battery"
               textFormat: Text.PlainText
               color: root.fg
               font.family: root.fontFamily
@@ -632,8 +632,10 @@ Panel {
           Text {
             id: heroValue
             textFormat: Text.PlainText
-            text: root.batteryPresent ? Model.formatPercent(Model.probeHealth(root.probe)) : "—"
-            color: root.healthColor
+            text: root.batteryPresent && root.probe.pct >= 0
+              ? Model.formatPercent(root.probe.pct, 0)
+              : "—"
+            color: root.fg
             font.family: root.fontFamily
             font.pixelSize: Style.font.displayLarge
             font.bold: true
@@ -719,6 +721,11 @@ Panel {
             width: (parent.width - parent.spacing) / 2
             spacing: Style.spacing.labelGap
 
+            InfoPair {
+              label: "Health"
+              value: root.batteryPresent ? Model.formatPercent(Model.probeHealth(root.probe)) : "—"
+              valueColor: root.healthColor
+            }
             InfoPair {
               label: "Full charge"
               value: Model.formatCapacity(root.probe.full, root.probe.unit)
@@ -856,6 +863,7 @@ Panel {
   component InfoPair: Row {
     property string label: ""
     property string value: ""
+    property color valueColor: root.fg
 
     width: parent.width
     spacing: Style.space(8)
@@ -866,7 +874,7 @@ Panel {
                          - parent.children[2].implicitWidth - parent.spacing * 2)
       height: 1
     }
-    InfoValue { text: value }
+    InfoValue { text: value; color: parent.valueColor }
   }
 
   component InfoLabel: Text {
