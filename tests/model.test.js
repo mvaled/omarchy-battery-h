@@ -24,8 +24,6 @@ function probeText(overrides) {
     power: null,
     status: "Not charging",
     tech: "Li-ion",
-    vendor: "NVT",
-    model: "FRANGWA",
     t: "1788000000"
   }, overrides || {})
   return Object.keys(fields)
@@ -99,8 +97,8 @@ function decayHistory(end, days, fromPct, toPct) {
 {
   // Firmware strings reach a label, so they are stripped of control characters
   // and markup and capped.
-  const hostile = Model.parseProbe(probeText({ model: "<b>evil</b>" }))
-  assert.strictEqual(hostile.model, "bevil/b")
+  const hostile = Model.parseProbe(probeText({ status: "<b>evil</b>" }))
+  assert.strictEqual(hostile.status, "bevil/b")
   assert.strictEqual(Model.safeText("a".repeat(200)).length <= 48, true)
 }
 

@@ -54,8 +54,6 @@ put "$charge_root/BAT0/voltage_min_design" 15480000
 put "$charge_root/BAT0/current_now" 1200000
 put "$charge_root/BAT0/status" Discharging
 put "$charge_root/BAT0/technology" Li-ion
-put "$charge_root/BAT0/manufacturer" NVT
-put "$charge_root/BAT0/model_name" FRANGWA
 
 out=$(OMARCHY_BATTERY_HEALTH_SUPPLY_DIR=$charge_root bash "$probe")
 check "charge pack is present" 1 "$(field "$out" present)"
@@ -65,7 +63,6 @@ check "charge pack full capacity" 4004000 "$(field "$out" full)"
 check "charge pack design capacity" 3915000 "$(field "$out" design)"
 check "charge pack cycles" 42 "$(field "$out" cycles)"
 check "charge pack status" Discharging "$(field "$out" status)"
-check "charge pack vendor" NVT "$(field "$out" vendor)"
 check "the mains supply is not mistaken for a battery" BAT0 "$(field "$out" battery)"
 
 check "charge pack current" 1200000 "$(field "$out" current)"
@@ -135,13 +132,13 @@ nasty_root=$fixture/nasty
 make_supply "$nasty_root" BAT0 Battery
 put "$nasty_root/BAT0/charge_full" 4000000
 put "$nasty_root/BAT0/charge_full_design" 4000000
-printf 'ACME\tCorp\nsecond line\n' > "$nasty_root/BAT0/manufacturer"
+printf 'Discharging\tforged\nsecond line\n' > "$nasty_root/BAT0/status"
 
 out=$(OMARCHY_BATTERY_HEALTH_SUPPLY_DIR=$nasty_root bash "$probe")
 # A tab or a second line in an attribute would split one record into two and
 # desynchronise every field after it, so both are stripped at the source.
-check "an embedded tab cannot forge a field" "ACMECorp" "$(field "$out" vendor)"
-check "only the first line of an attribute is read" 1 "$(grep -c '^vendor' <<< "$out")"
+check "an embedded tab cannot forge a field" "Dischargingforged" "$(field "$out" status)"
+check "only the first line of an attribute is read" 1 "$(grep -c '^status' <<< "$out")"
 
 # ------------------------------------------------------------------ result
 

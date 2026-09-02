@@ -45,9 +45,10 @@ var LEVEL_GLYPHS = ["󰁺", "󰁻", "󰁼", "󰁽", "󰁾", "󰁿", "󰂀", "�
 var GLYPH_CHARGING = "󰂄"
 var GLYPH_FULL = "󰂅"
 
-// Vendor and model strings come from firmware, so treat them as hostile before
-// they reach a label: drop control characters and angle brackets, collapse
-// whitespace, and cap the length so a joke model name cannot stretch the panel.
+// Every text field here comes from firmware, so treat it as hostile before it
+// reaches a label: drop control characters and angle brackets, collapse
+// whitespace, and cap the length so an odd status string cannot stretch the
+// panel.
 function safeText(value, limit) {
   var text = value === null || value === undefined ? "" : String(value)
   text = text.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/[<>]/g, "")
@@ -80,8 +81,6 @@ function defaultProbe() {
     power: 0,
     status: "",
     tech: "",
-    vendor: "",
-    model: "",
     t: 0
   }
 }
@@ -103,9 +102,7 @@ var PROBE_TEXT = {
   battery: "battery",
   unit: "unit",
   status: "status",
-  tech: "tech",
-  vendor: "vendor",
-  model: "model"
+  tech: "tech"
 }
 
 function assignProbeField(probe, key, value) {
@@ -596,11 +593,6 @@ function statusLabel(probe) {
   return probe.status ? probe.status : "Idle"
 }
 
-function packLabel(probe) {
-  var parts = [probe.vendor, probe.model].filter(function (part) { return !!part })
-  return parts.join(" ")
-}
-
 function batteryGlyph(probe) {
   if (!probe || !probe.ok) return LEVEL_GLYPHS[LEVEL_GLYPHS.length - 1]
   var code = statusCode(probe.status)
@@ -770,7 +762,6 @@ if (typeof module !== "undefined") {
     formatWindowSpan: formatWindowSpan,
     axisTimeLabel: axisTimeLabel,
     statusLabel: statusLabel,
-    packLabel: packLabel,
     batteryGlyph: batteryGlyph,
     barText: barText,
     barTooltip: barTooltip,

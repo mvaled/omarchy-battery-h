@@ -90,6 +90,10 @@ Panel {
 
   readonly property bool batteryPresent: probe.ok
 
+  readonly property string readout: Model.barText(probe, stats, displayMode)
+  readonly property string verticalReadout: readout.replace("%", "").replace(" cyc", "")
+  readonly property bool vertical: bar ? bar.vertical === true : false
+
   // The width the charge graph is actually drawing, which is the configured
   // window or the whole series, whichever is shorter.
   readonly property var chargeRange: {
@@ -507,18 +511,44 @@ Panel {
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
 
-  BarIconButton {
+  // WidgetButton rather than BarIconButton: the latter reserves a fixed
+  // icon-sized slot, and a text readout either overflows it or — with the slot
+  // widened to fit the longest mode — pads a short reading like "63%" out with
+  // dead space on both sides. WidgetButton sizes to its own label, so the
+  // widget takes exactly the width it paints.
+  //
+  // The margins are left at WidgetButton's defaults deliberately. Omarchy has
+  // no shared margin token; every widget carries its own literal (5 for
+  // indicators, 6 for workspaces, 7.5 for the menu, 8.75 for the clock), so
+  // inheriting the component default is the closest thing to a shared value
+  // and follows it if upstream ever retunes the bar.
+  WidgetButton {
     id: button
     anchors.fill: parent
     bar: root.bar
-    text: Model.barText(root.probe, root.stats, root.displayMode)
-    // A text readout needs a wider slot than the icon-sized default.
-    slotSize: Style.bar.iconSlot * (vertical ? 1 : 2)
+    text: root.vertical ? "" : root.readout
+    labelVisible: !root.vertical
+    hasVisualContent: root.readout !== ""
+    // The vertical form paints its own centred label, so there is no label
+    // height to derive a slot from; take one standard icon slot instead.
+    fixedHeight: root.vertical ? Style.bar.iconSlot : -1
     tooltipText: Model.barTooltip(root.probe, root.stats)
     onPressed: function(b) {
       if (b === Qt.RightButton) root.cycleDisplayMode()
       else if (b === Qt.MiddleButton) root.refresh(true)
       else root.toggle()
+    }
+
+    // A 28px vertical bar has no room for a percent sign beside three digits,
+    // so the vertical form keeps the number and drops the unit.
+    Text {
+      anchors.centerIn: parent
+      visible: root.vertical
+      textFormat: Text.PlainText
+      text: root.verticalReadout
+      color: root.barForeground
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
     }
   }
 
@@ -582,14 +612,7 @@ Panel {
             }
 
             Text {
-              // Status first, and the battery id left out: at this width the
-              // three-part version elided away the one part that changes.
-              text: {
-                var pack = Model.packLabel(root.probe)
-                var parts = [Model.statusLabel(root.probe)]
-                if (pack) parts.push(pack)
-                return parts.join(" · ").toUpperCase()
-              }
+              text: Model.statusLabel(root.probe).toUpperCase()
               textFormat: Text.PlainText
               color: Qt.darker(root.fg, 1.4)
               font.family: root.fontFamily
