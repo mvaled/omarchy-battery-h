@@ -102,6 +102,13 @@ Panel {
       Model.chargeSeries(history.charge, chargeWindowSec, now), chargeWindowSec, now)
   }
   readonly property string chargeSpanLabel: Model.formatWindowSpan(chargeRange.to - chargeRange.from)
+
+  readonly property string nextHealthLabel: {
+    var due = Model.nextHealthSampleAt(history.health)
+    if (due <= 0) return "shortly"
+    var now = probe.t > 0 ? probe.t : Math.floor(Date.now() / 1000)
+    return due <= now ? "shortly" : "in " + Model.formatWindowSpan(due - now)
+  }
   readonly property bool collecting: stats.points < 2
 
   // --------------------------------------------------------------- sampling
@@ -853,11 +860,20 @@ Panel {
             }
 
             Text {
-              text: root.batteryPresent
-                ? (root.stats.points === 1
-                   ? "First sample recorded " + Model.formatDate(root.stats.firstT) + ".\nA reading is stored whenever the capacity moves; the curve fills in from there."
-                   : "Capacity retention moves over weeks, not hours.")
-                : "No /sys/class/power_supply entry reports a design capacity."
+              // Naming the schedule and the next due reading matters here:
+              // capacity almost never moves on its own, so text that mentions
+              // only the change-triggered write reads as "this may never
+              // fill".
+              text: {
+                if (!root.batteryPresent)
+                  return "No /sys/class/power_supply entry reports a design capacity."
+                if (root.stats.points < 1)
+                  return "Capacity retention moves over weeks, not hours."
+                return "First reading " + Model.formatDate(root.stats.firstT)
+                  + ".\nA reading is stored every " + Math.round(Model.HEALTH_HEARTBEAT_SEC / Model.HOUR_SEC)
+                  + " hours, and immediately if the capacity moves."
+                  + "\nNext reading due " + root.nextHealthLabel + "."
+              }
               textFormat: Text.PlainText
               color: Qt.darker(root.fg, 1.4)
               font.family: root.fontFamily

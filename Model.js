@@ -80,7 +80,6 @@ function defaultProbe() {
     current: 0,
     power: 0,
     status: "",
-    tech: "",
     t: 0
   }
 }
@@ -101,8 +100,7 @@ var PROBE_NUMERIC = {
 var PROBE_TEXT = {
   battery: "battery",
   unit: "unit",
-  status: "status",
-  tech: "tech"
+  status: "status"
 }
 
 function assignProbeField(probe, key, value) {
@@ -422,14 +420,15 @@ function healthDaysAgo(points, days, now) {
   return candidates.length === 0 ? null : candidates[candidates.length - 1]
 }
 
-function cycleRatePerMonth(points) {
-  var known = points.filter(function (point) { return point.cyc >= 0 })
-  if (known.length < 2) return null
-  var first = known[0]
-  var last = known[known.length - 1]
-  var span = last.t - first.t
-  if (span < MIN_TREND_SPAN_SEC || last.cyc < first.cyc) return null
-  return ((last.cyc - first.cyc) / span) * MONTH_SEC
+// When the next health row falls due if the capacity does not move before then.
+// The empty state shows this so a curve that has not appeared yet reads as
+// "waiting" rather than "broken" — the complaint the heartbeat exists to
+// answer is precisely that capacity alone almost never moves.
+function nextHealthSampleAt(health, heartbeatSec) {
+  var entries = Array.isArray(health) ? health : []
+  if (entries.length === 0) return 0
+  var heartbeat = heartbeatSec === undefined ? HEALTH_HEARTBEAT_SEC : heartbeatSec
+  return entries[entries.length - 1].t + heartbeat
 }
 
 function healthSeries(health) {
@@ -443,24 +442,19 @@ function wearStats(health, now) {
   var stats = {
     points: points.length,
     current: null,
-    currentT: 0,
-    first: null,
     firstT: 0,
     spanDays: 0,
     delta30: null,
     delta90: null,
     perMonth: null,
     eolEpoch: null,
-    cycles: -1,
-    cyclesPerMonth: null
+    cycles: -1
   }
   if (points.length === 0) return stats
 
   var last = points[points.length - 1]
   var first = points[0]
   stats.current = last.pct
-  stats.currentT = last.t
-  stats.first = first.pct
   stats.firstT = first.t
   stats.spanDays = Math.max(0, Math.round((last.t - first.t) / DAY_SEC))
   stats.cycles = last.cyc
@@ -471,7 +465,6 @@ function wearStats(health, now) {
   if (older90) stats.delta90 = last.pct - older90.pct
 
   stats.perMonth = trendPerMonth(points)
-  stats.cyclesPerMonth = cycleRatePerMonth(points)
 
   // Only project forward on a slope that is actually downward and steeper than
   // the noise floor of integer sysfs capacities. An improving or flat battery
@@ -711,12 +704,10 @@ function timeTicks(from, to, count) {
 
 if (typeof module !== "undefined") {
   module.exports = {
-    SCHEMA: SCHEMA,
     DAY_SEC: DAY_SEC,
     HOUR_SEC: HOUR_SEC,
     MONTH_SEC: MONTH_SEC,
     END_OF_LIFE_PCT: END_OF_LIFE_PCT,
-    MAX_HEALTH_ENTRIES: MAX_HEALTH_ENTRIES,
     MAX_CHARGE_ENTRIES: MAX_CHARGE_ENTRIES,
     CHARGING: CHARGING,
     IDLE: IDLE,
@@ -724,7 +715,6 @@ if (typeof module !== "undefined") {
     safeText: safeText,
     defaultProbe: defaultProbe,
     parseProbe: parseProbe,
-    healthPercent: healthPercent,
     probeHealth: probeHealth,
     statusCode: statusCode,
     watts: watts,
@@ -733,18 +723,14 @@ if (typeof module !== "undefined") {
     parseHistory: parseHistory,
     serializeHistory: serializeHistory,
     HEALTH_HEARTBEAT_SEC: HEALTH_HEARTBEAT_SEC,
-    sameHealthReading: sameHealthReading,
     shouldRecordHealth: shouldRecordHealth,
     appendHealth: appendHealth,
     sampleIntervalFor: sampleIntervalFor,
     appendCharge: appendCharge,
     recordProbe: recordProbe,
     mergeHistories: mergeHistories,
-    dedupeByTime: dedupeByTime,
     healthSeries: healthSeries,
-    trendPerMonth: trendPerMonth,
-    healthDaysAgo: healthDaysAgo,
-    cycleRatePerMonth: cycleRatePerMonth,
+    nextHealthSampleAt: nextHealthSampleAt,
     wearStats: wearStats,
     chargeSeries: chargeSeries,
     chargeWindowRange: chargeWindowRange,
@@ -753,12 +739,10 @@ if (typeof module !== "undefined") {
     formatDelta: formatDelta,
     formatRate: formatRate,
     formatCapacity: formatCapacity,
-    energyWh: energyWh,
     formatEnergy: formatEnergy,
     formatDate: formatDate,
     formatMonthYear: formatMonthYear,
     formatSpan: formatSpan,
-    formatClock: formatClock,
     formatWindowSpan: formatWindowSpan,
     axisTimeLabel: axisTimeLabel,
     statusLabel: statusLabel,

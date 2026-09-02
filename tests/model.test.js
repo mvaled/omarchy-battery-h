@@ -23,7 +23,6 @@ function probeText(overrides) {
     current: "0",
     power: null,
     status: "Not charging",
-    tech: "Li-ion",
     t: "1788000000"
   }, overrides || {})
   return Object.keys(fields)
@@ -173,6 +172,30 @@ function decayHistory(end, days, fromPct, toPct) {
   health = Model.appendHealth(health, { t: now + 3600, full: 99, design: 100, cyc: 1 }, 730, now + 3600)
   assert.strictEqual(health.length, 2)
   assert.deepStrictEqual(health.map((entry) => entry.t), [now, now + 3600])
+}
+
+{
+  // The heartbeat is what makes the health curve appear at all: capacity moves
+  // only when the firmware recalibrates, which can be weeks apart, so without
+  // it a healthy battery would store exactly one row and never plot a line.
+  const now = 1788000000
+  const due = Model.nextHealthSampleAt([{ t: now, full: 100, design: 100, cyc: 1 }])
+  assert.strictEqual(due - now, Model.HEALTH_HEARTBEAT_SEC)
+  assert.strictEqual(Model.nextHealthSampleAt([]), 0)
+
+  // Three days of polling a pack whose capacity never budges still yields a
+  // curve, one point per heartbeat.
+  let state = Model.defaultHistory()
+  for (let t = now; t < now + 3 * DAY; t += 600) {
+    state = Model.recordProbe(state, Model.parseProbe(probeText({ t: String(t) })), {})
+  }
+  // One row for the first poll, then one per heartbeat that the loop reaches;
+  // its last step lands 600s short of the three-day mark.
+  const expected = 1 + Math.floor((3 * DAY - 600) / Model.HEALTH_HEARTBEAT_SEC)
+  assert.strictEqual(state.health.length, expected,
+                     "expected one row per heartbeat, got " + state.health.length)
+  const gaps = state.health.slice(1).map((e, i) => e.t - state.health[i].t)
+  assert.ok(gaps.every((g) => g === Model.HEALTH_HEARTBEAT_SEC), String(gaps))
 }
 
 {
@@ -435,19 +458,6 @@ function decayHistory(end, days, fromPct, toPct) {
   // Neither does one already past the line, since there is nothing to project.
   const now = 1788000000
   assert.strictEqual(Model.wearStats(decayHistory(now, 200, 82, 76), now).eolEpoch, null)
-}
-
-{
-  // Cycle rate needs two known counts and a meaningful span; a counter that
-  // resets (pack swap mid-history) reports nothing rather than a negative rate.
-  const now = 1788000000
-  const points = Model.healthSeries(decayHistory(now, 60, 100, 98))
-  assert.ok(Model.cycleRatePerMonth(points) > 0)
-  assert.strictEqual(Model.cycleRatePerMonth([]), null)
-  assert.strictEqual(Model.cycleRatePerMonth([
-    { t: 0, pct: 100, cyc: 90 },
-    { t: 100 * DAY, pct: 99, cyc: 10 }
-  ]), null)
 }
 
 {
