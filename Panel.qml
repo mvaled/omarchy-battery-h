@@ -77,6 +77,9 @@ Panel {
   // a shared value would draw a crosshair on the graph the cursor left.
   property real healthHoverX: -1
   property real chargeHoverX: -1
+  // Each graph places its own chip, so the height it will occupy has to be
+  // known outside paintHoverChip.
+  readonly property real hoverChipHeight: Style.space(16)
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -308,8 +311,9 @@ Panel {
 
   // The chip that labels the crosshair, written as {text, color} segments so a
   // graph carrying two series can color each number like the curve it came
-  // from. Segments are separated by the same double space throughout.
-  function paintHoverChip(ctx, frame, hx, segments) {
+  // from. Segments are separated by the same double space throughout. `chipY`
+  // is its top edge, which each graph picks to sit clear of its own curves.
+  function paintHoverChip(ctx, frame, hx, chipY, segments) {
     ctx.font = Style.font.caption + "px " + root.fontFamily
     var gapW = ctx.measureText("  ").width
     var textW = 0
@@ -318,13 +322,13 @@ Panel {
     })
 
     var chipW = textW + Style.space(10)
-    var chipH = Style.space(16)
+    var chipH = root.hoverChipHeight
     // Keep the chip inside the frame when the cursor is near either edge.
     var chipX = Math.max(frame.x, Math.min(frame.x + frame.w - chipW, hx - chipW / 2))
 
     var bg = Color.popups.background
     ctx.fillStyle = Qt.rgba(bg.r, bg.g, bg.b, 0.92)
-    ctx.fillRect(chipX, frame.y, chipW, chipH)
+    ctx.fillRect(chipX, chipY, chipW, chipH)
 
     ctx.textBaseline = "middle"
     ctx.textAlign = "left"
@@ -332,7 +336,7 @@ Panel {
     segments.forEach(function (segment, index) {
       if (index > 0) cursor += gapW
       ctx.fillStyle = segment.color
-      ctx.fillText(segment.text, cursor, frame.y + chipH / 2)
+      ctx.fillText(segment.text, cursor, chipY + chipH / 2)
       cursor += ctx.measureText(segment.text).width
     })
   }
@@ -345,7 +349,7 @@ Panel {
 
     paintCrosshair(ctx, frame, hx)
     paintMarker(ctx, hx, yAt(nearest.pct), root.healthColor)
-    paintHoverChip(ctx, frame, hx, [
+    paintHoverChip(ctx, frame, hx, frame.y, [
       { text: Model.formatPercent(nearest.pct), color: root.healthColor },
       { text: Model.shortDate(nearest.t), color: root.healthColor }
     ])
@@ -364,7 +368,11 @@ Panel {
     paintCrosshair(ctx, frame, hx)
     paintMarker(ctx, hx, yCharge(nearest.p), Qt.rgba(base.r, base.g, base.b, 0.8))
     paintMarker(ctx, hx, yPower(nearest.w), Color.accent)
-    paintHoverChip(ctx, frame, hx, [
+    // The chip rides just above the shared 50% / 0 W line instead of the top of
+    // the frame: that line is where the eye already is, the top of the frame is
+    // where a healthy charge curve sits, and the gap clears the power marker
+    // when the pack is drawing nothing.
+    paintHoverChip(ctx, frame, hx, yCharge(50) - root.hoverChipHeight - Style.space(5), [
       { text: Math.round(nearest.p) + "%", color: base },
       { text: Model.formatWatts(nearest.w), color: Color.accent },
       { text: Model.hoverTimeLabel(nearest.t, timeSpan), color: Qt.rgba(base.r, base.g, base.b, 0.55) }
