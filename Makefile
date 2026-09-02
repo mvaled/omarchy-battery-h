@@ -57,9 +57,17 @@ uninstall: disable
 	@if [ -L "$(PLUGIN_DIR)" ]; then rm -- "$(PLUGIN_DIR)"; fi
 	omarchy-shell shell rescanPlugins
 
+# The readout is meant to sit beside the built-in battery glyph, and placement
+# is an argument to enable rather than a command of its own, so the move is a
+# second enable.  It is only attempted when omarchy.power is on the bar, and a
+# failure to place the widget must not undo having enabled it.
 .PHONY: enable
 enable:
 	omarchy plugin enable $(PLUGIN_ID)
+	-@if omarchy plugin list --json | \
+		jq -e 'any(.[]; .id == "omarchy.power" and .enabled)' >/dev/null; then \
+		omarchy plugin enable $(PLUGIN_ID) --before omarchy.power; \
+	fi
 
 # uninstall depends on this, and omarchy-plugin-disable fails outright on an
 # unknown id, so the failure is ignored to keep uninstall able to reach the
