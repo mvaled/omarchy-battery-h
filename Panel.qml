@@ -440,7 +440,6 @@ Panel {
   }
 
   Process {
-    id: initProc
     command: ["mkdir", "-p", root.stateDir]
     running: true
     onExited: {
@@ -479,7 +478,6 @@ Panel {
   // re-fire it. The events below already cover those transitions, and
   // onReadyChanged covers the first sample.
   Timer {
-    id: sampleTimer
     interval: root.sampleSeconds * 1000
     running: root.ready
     repeat: true
@@ -641,40 +639,6 @@ Panel {
             font.bold: true
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-          }
-        }
-
-        // ---------- Retention bar, with the 80% end-of-life mark ----------
-        Item {
-          width: parent.width
-          implicitHeight: Style.space(8)
-          visible: root.batteryPresent
-
-          Rectangle {
-            id: wearTrack
-            anchors.fill: parent
-            radius: height / 2
-            color: Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.12)
-          }
-
-          Rectangle {
-            anchors.left: wearTrack.left
-            anchors.verticalCenter: wearTrack.verticalCenter
-            height: wearTrack.height
-            radius: wearTrack.radius
-            color: root.healthColor
-            // Retention above 100% is real — firmware often rates a fresh pack
-            // conservatively — but the bar has nowhere to put it, so it clamps.
-            width: Math.max(wearTrack.height,
-                            wearTrack.width * Math.max(0, Math.min(1, Model.probeHealth(root.probe) / 100)))
-          }
-
-          Rectangle {
-            width: 1
-            height: wearTrack.height + Style.space(4)
-            anchors.verticalCenter: wearTrack.verticalCenter
-            x: wearTrack.width * (Model.END_OF_LIFE_PCT / 100)
-            color: Qt.rgba(Color.urgent.r, Color.urgent.g, Color.urgent.b, 0.7)
           }
         }
 

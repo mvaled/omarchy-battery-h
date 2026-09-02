@@ -51,7 +51,7 @@ Several of these deliberately show `—` rather than a number:
 - **Last 30 / 90 days** appear only once the history actually reaches back that far, instead of quietly comparing against the oldest sample on hand.
 - **Reaches 80%** appears only for a battery that is actually declining.  A flat or improving one would need a fabricated slope to produce a date, and a pack already below 80% has nothing left to project.
 
-The 80% line is drawn on the health graph, and on the retention bar, only when it is in view — a healthy battery is not permanently reminded of its mortality.
+The 80% line is drawn on the health graph only when it is in view — a healthy battery is not permanently reminded of its mortality.
 
 One thing worth being blunt about: health is the battery controller's own self-report.  `charge_full` is the firmware's estimate of present full capacity, and it only updates when the firmware recalibrates — usually after a full charge.  This plugin measures nothing itself; it does not integrate the watt-hours from the charge and power series to derive capacity independently.  So health here means *what the pack's controller currently claims it can hold, against its nameplate*.  It moves in steps rather than smoothly, and a pack held at a charge limit that never recalibrates can read optimistically.
 
