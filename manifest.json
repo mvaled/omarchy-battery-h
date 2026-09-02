@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "id": "manu.battery-health",
+  "name": "Battery Health",
+  "version": "1.2.0",
+  "author": "Manuel Vázquez Acosta",
+  "license": "MIT",
+  "description": "Long-term battery health history: capacity retention and charge cycles tracked at the moment they change, plus a recent charge-level graph. Polls adaptively and reacts to charge-state changes.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Battery Health",
+    "description": "Capacity retention (charge_full / charge_full_design) tracked over time, with wear rate, cycle count, an end-of-life projection and a recent charge-level graph. Samples every 10 minutes while current is flowing and backs off when idle.",
+    "category": "System",
+    "aliases": [
+      "battery",
+      "health",
+      "wear",
+      "capacity",
+      "cycles",
+      "degradation"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "activeIntervalSec": 600,
+      "idleIntervalSec": 1800,
+      "chargeWindowDays": 7,
+      "historyDays": 730,
+      "displayMode": "charge",
+      "battery": ""
+    },
+    "schema": [
+      {
+        "key": "activeIntervalSec",
+        "type": "integer",
+        "label": "Polling interval while charging or discharging (seconds)",
+        "description": "How often sysfs is read while current is flowing. This is the cadence that shapes the charge graph.",
+        "min": 60,
+        "max": 3600,
+        "step": 60,
+        "defaultValue": 600
+      },
+      {
+        "key": "idleIntervalSec",
+        "type": "integer",
+        "label": "Polling interval while idle (seconds)",
+        "description": "How often sysfs is read while the battery is neither charging nor draining. Nothing moves in this state, so polling backs off.",
+        "min": 60,
+        "max": 7200,
+        "step": 60,
+        "defaultValue": 1800
+      },
+      {
+        "key": "chargeWindowDays",
+        "type": "integer",
+        "label": "Charge graph window (days)",
+        "description": "How far back the charge and power graph reaches, and how long those samples are kept. The graph narrows to the data it actually has, so a fresh install still fills the frame.",
+        "min": 1,
+        "max": 30,
+        "step": 1,
+        "defaultValue": 7
+      },
+      {
+        "key": "historyDays",
+        "type": "integer",
+        "label": "Health history retention (days)",
+        "description": "How far back health samples are kept. A sample is stored only when the capacity or cycle count moves, plus a heartbeat every six hours, so even the maximum stays a small file.",
+        "min": 30,
+        "max": 3650,
+        "step": 30,
+        "defaultValue": 730
+      },
+      {
+        "key": "displayMode",
+        "type": "enum",
+        "label": "Bar readout",
+        "description": "What the bar widget shows: the live charge level, the capacity retention, or the cycle count. Text only — omarchy.power already carries a battery glyph, and this widget usually sits next to it.",
+        "options": [
+          "charge",
+          "health",
+          "cycles"
+        ],
+        "defaultValue": "charge"
+      },
+      {
+        "key": "battery",
+        "type": "string",
+        "label": "Battery name",
+        "description": "Optional. A specific /sys/class/power_supply entry such as BAT0 or BAT1. Empty means the first battery that reports a design capacity.",
+        "defaultValue": ""
+      }
+    ]
+  }
+}
