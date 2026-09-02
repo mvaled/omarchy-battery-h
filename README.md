@@ -11,7 +11,7 @@ Retention is what the widget is named for, but it is also the number you cannot 
 
 ```text
 ┌─ Battery health ───────────────────────┐
-│ 󰂅  BATTERY HEALTH               102.3% │
+│ 󰂅  BATTERY HEALTH              102.3% │
 │    FULLY CHARGED                       │
 │ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓┃▓▓▓▓▓▓░░░░░░░  │
 │                                        │
@@ -19,7 +19,7 @@ Retention is what the widget is named for, but it is also the number you cannot 
 │ 100%┤      ╱│    ╱│    ╱│         +40W │
 │  75%┤    ╱  │  ╱  │  ╱  │              │
 │  50%┼───╱───┼─╱───┼─╱───┼────────  0 W │
-│  25%┤ ∿∿ ╲__│∿  ╲_│∿  ╲_│∿∿∿          │
+│  25%┤ ∿∿ ╲__│∿  ╲_│∿  ╲_│∿∿∿        │
 │   0%┤                             −40W │
 │     └──────────────────────────────    │
 │      26 Aug     29 Aug          now    │
