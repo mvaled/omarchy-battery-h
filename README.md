@@ -9,34 +9,7 @@ The two move on completely different timescales, which is why they are stored di
 
 Retention is what the widget is named for, but it is also the number you cannot see for weeks on a new battery.  Charge and power give the panel something honest to show from the first hour.
 
-```text
-┌─ Battery health ───────────────────────┐
-│ 󰂅  BATTERY HEALTH              102.3% │
-│    FULLY CHARGED                       │
-│ ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓┃▓▓▓▓▓▓░░░░░░░  │
-│                                        │
-│ CHARGE & POWER · 7 DAYS      63% · −14W│
-│ 100%┤      ╱│    ╱│    ╱│         +40W │
-│  75%┤    ╱  │  ╱  │  ╱  │              │
-│  50%┼───╱───┼─╱───┼─╱───┼────────  0 W │
-│  25%┤ ∿∿ ╲__│∿  ╲_│∿  ╲_│∿∿∿        │
-│   0%┤                             −40W │
-│     └──────────────────────────────    │
-│      26 Aug     29 Aug          now    │
-│                                        │
-│ Full charge 4004 mAh  Wear rate  −0.4% │
-│ Design      3915 mAh  Last 30 d   −0.3%│
-│ Energy       62.0 Wh  Last 90 d   −0.9%│
-│ Cycles            2   Reaches 80% 2029 │
-│                                        │
-│ HEALTH OVER 7 DAYS                     │
-│ 102%┤●●●───●●────●●●──                 │
-│ 100%┤                                  │
-│     └──────────────────────────────    │
-│      26 Aug     29 Aug        2 Sep    │
-└────────────────────────────────────────┘
-```
-
+![The Battery Health panel](preview.png)
 
 ## Install
 
@@ -107,14 +80,14 @@ It shows the **live charge level** by default — that is the number worth glanc
 Over IPC:
 
 ```bash
-omarchy-shell manu.battery-health toggle
-omarchy-shell manu.battery-health refresh
-omarchy-shell manu.battery-health cycleDisplay
+omarchy-shell io.github.mvaled.battery-health toggle
+omarchy-shell io.github.mvaled.battery-health refresh
+omarchy-shell io.github.mvaled.battery-health cycleDisplay
 ```
 
 ## Settings
 
-Set them with `omarchy bar set manu.battery-health <key> <value> --json`, or inline on the widget's entry in `~/.config/omarchy/shell.json`.
+Set them with `omarchy bar set io.github.mvaled.battery-health <key> <value> --json`, or inline on the widget's entry in `~/.config/omarchy/shell.json`.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -142,7 +115,7 @@ Nothing moves in the idle state, so polling backs off rather than burning wakeup
 
 ## How it stores history
 
-One JSON file, `~/.local/state/manu.battery-health/history.json`:
+One JSON file, `~/.local/state/io.github.mvaled.battery-health/history.json`:
 
 ```json
 {

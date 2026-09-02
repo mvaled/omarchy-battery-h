@@ -1,4 +1,4 @@
-PLUGIN_ID := manu.battery-health
+PLUGIN_ID := io.github.mvaled.battery-health
 PLUGIN_DIR := $(HOME)/.config/omarchy/plugins/$(PLUGIN_ID)
 STATE_DIR := $(HOME)/.local/state/$(PLUGIN_ID)
 # Arch keeps the Qt 6 QML tools off the default PATH.

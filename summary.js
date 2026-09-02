@@ -6,7 +6,7 @@ const fs = require("fs")
 const path = require("path")
 const Model = require("./Model.js")
 
-const file = path.join(process.env.HOME, ".local/state/manu.battery-health/history.json")
+const file = path.join(process.env.HOME, ".local/state/io.github.mvaled.battery-health/history.json")
 
 if (!fs.existsSync(file)) {
   console.log("no history yet at " + file)

@@ -12,7 +12,7 @@ import "Model.js" as Model
 // by charge_full_design, i.e. how much of the pack the firmware still believes
 // it can hold. That value moves over weeks, not seconds, so the whole design is
 // built around persistence rather than live streaming — one cheap sysfs read
-// every few minutes, folded into ~/.local/state/manu.battery-health/history.json
+// every few minutes, folded into ~/.local/state/io.github.mvaled.battery-health/history.json
 // as a change-point series: a sample is stored when a value actually moves, and
 // otherwise only often enough to prove the quiet stretch was observed.
 //
@@ -31,12 +31,12 @@ import "Model.js" as Model
 // Settings (manifest defaults and schema, read through setting()):
 // activeIntervalSec, idleIntervalSec, chargeWindowDays, historyDays,
 // displayMode, battery. Set
-// them with `omarchy bar set manu.battery-health <key> <value> --json` or
+// them with `omarchy bar set io.github.mvaled.battery-health <key> <value> --json` or
 // inline in shell.json.
 Panel {
   id: root
-  moduleName: "manu.battery-health"
-  ipcTarget: "manu.battery-health"
+  moduleName: "io.github.mvaled.battery-health"
+  ipcTarget: "io.github.mvaled.battery-health"
   // manageIpc: false so this panel can own the single IpcHandler the target
   // permits and still expose refresh/cycleDisplay alongside the lifecycle
   // methods the base class would otherwise register.
@@ -428,7 +428,7 @@ Panel {
   // ------------------------------------------------------------------ wiring
 
   IpcHandler {
-    target: "manu.battery-health"
+    target: "io.github.mvaled.battery-health"
 
     function open(): void { root.open() }
     function close(): void { root.close() }

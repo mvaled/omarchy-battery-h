@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "id": "manu.battery-health",
+  "id": "io.github.mvaled.battery-health",
   "name": "Battery Health",
   "version": "1.2.0",
   "author": "Manuel Vázquez Acosta",
