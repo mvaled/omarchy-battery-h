@@ -59,11 +59,14 @@ uninstall: disable
 
 .PHONY: enable
 enable:
-	omarchy plugin enable $(PLUGIN_ID) --yes
+	omarchy plugin enable $(PLUGIN_ID)
 
+# uninstall depends on this, and omarchy-plugin-disable fails outright on an
+# unknown id, so the failure is ignored to keep uninstall able to reach the
+# symlink when the shell has already forgotten the plugin.
 .PHONY: disable
 disable:
-	-omarchy plugin disable $(PLUGIN_ID) --yes
+	-omarchy plugin disable $(PLUGIN_ID)
 
 # The shell only watches real paths under the plugin directory, and this
 # checkout is reached through a symlink, so edits here need an explicit rescan.
