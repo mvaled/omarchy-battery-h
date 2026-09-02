@@ -73,7 +73,10 @@ Panel {
   property bool historyLoaded: false
   readonly property bool ready: dirReady && historyLoaded
 
-  property real hoverX: -1
+  // One hover position per graph: the two canvases repaint independently, and
+  // a shared value would draw a crosshair on the graph the cursor left.
+  property real healthHoverX: -1
+  property real chargeHoverX: -1
 
   readonly property color fg: bar ? bar.foreground : Color.foreground
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
@@ -271,38 +274,50 @@ Panel {
       ctx.fillText(tick.label, xAt(tick.t), frame.y + frame.h + Style.space(4))
     })
 
-    paintHover(ctx, series, frame, xAt, yAt)
+    paintHealthHover(ctx, series, frame, xAt, yAt)
   }
 
-  function paintHover(ctx, series, frame, xAt, yAt) {
-    if (root.hoverX < frame.x || root.hoverX > frame.x + frame.w) return
+  // ------------------------------------------------------------------- hover
 
-    // Nearest sample to the cursor rather than an interpolated position: every
-    // point on this curve is a real reading and the chip should name one.
+  // The sample nearest the cursor rather than an interpolated position: every
+  // point on these curves is a real reading and the chip should name one.
+  function nearestSample(series, xAt, hoverX) {
     var nearest = series[0]
     series.forEach(function (point) {
-      if (Math.abs(xAt(point.t) - root.hoverX) < Math.abs(xAt(nearest.t) - root.hoverX)) nearest = point
+      if (Math.abs(xAt(point.t) - hoverX) < Math.abs(xAt(nearest.t) - hoverX)) nearest = point
     })
+    return nearest
+  }
 
-    var hx = xAt(nearest.t)
-    var hy = yAt(nearest.pct)
+  function paintCrosshair(ctx, frame, hx) {
     var base = root.fg
-
     ctx.beginPath()
     ctx.moveTo(hx, frame.y)
     ctx.lineTo(hx, frame.y + frame.h)
     ctx.strokeStyle = Qt.rgba(base.r, base.g, base.b, 0.40)
     ctx.lineWidth = 1
     ctx.stroke()
+  }
 
+  function paintMarker(ctx, x, y, color) {
     ctx.beginPath()
-    ctx.arc(hx, hy, 3.5, 0, Math.PI * 2)
-    ctx.fillStyle = root.healthColor
+    ctx.arc(x, y, 3.5, 0, Math.PI * 2)
+    ctx.fillStyle = color
     ctx.fill()
+  }
 
-    var chipText = Model.formatPercent(nearest.pct) + "  " + Model.shortDate(nearest.t)
+  // The chip that labels the crosshair, written as {text, color} segments so a
+  // graph carrying two series can color each number like the curve it came
+  // from. Segments are separated by the same double space throughout.
+  function paintHoverChip(ctx, frame, hx, segments) {
     ctx.font = Style.font.caption + "px " + root.fontFamily
-    var chipW = ctx.measureText(chipText).width + Style.space(10)
+    var gapW = ctx.measureText("  ").width
+    var textW = 0
+    segments.forEach(function (segment, index) {
+      textW += ctx.measureText(segment.text).width + (index > 0 ? gapW : 0)
+    })
+
+    var chipW = textW + Style.space(10)
     var chipH = Style.space(16)
     // Keep the chip inside the frame when the cursor is near either edge.
     var chipX = Math.max(frame.x, Math.min(frame.x + frame.w - chipW, hx - chipW / 2))
@@ -310,10 +325,50 @@ Panel {
     var bg = Color.popups.background
     ctx.fillStyle = Qt.rgba(bg.r, bg.g, bg.b, 0.92)
     ctx.fillRect(chipX, frame.y, chipW, chipH)
-    ctx.fillStyle = root.healthColor
+
     ctx.textBaseline = "middle"
-    ctx.textAlign = "center"
-    ctx.fillText(chipText, chipX + chipW / 2, frame.y + chipH / 2)
+    ctx.textAlign = "left"
+    var cursor = chipX + (chipW - textW) / 2
+    segments.forEach(function (segment, index) {
+      if (index > 0) cursor += gapW
+      ctx.fillStyle = segment.color
+      ctx.fillText(segment.text, cursor, frame.y + chipH / 2)
+      cursor += ctx.measureText(segment.text).width
+    })
+  }
+
+  function paintHealthHover(ctx, series, frame, xAt, yAt) {
+    if (root.healthHoverX < frame.x || root.healthHoverX > frame.x + frame.w) return
+
+    var nearest = nearestSample(series, xAt, root.healthHoverX)
+    var hx = xAt(nearest.t)
+
+    paintCrosshair(ctx, frame, hx)
+    paintMarker(ctx, hx, yAt(nearest.pct), root.healthColor)
+    paintHoverChip(ctx, frame, hx, [
+      { text: Model.formatPercent(nearest.pct), color: root.healthColor },
+      { text: Model.shortDate(nearest.t), color: root.healthColor }
+    ])
+  }
+
+  // Both series are marked at once: the two numbers under the cursor belong to
+  // the same sample, and reading the pack's level against what it was drawing
+  // at that moment is the reason they share a frame.
+  function paintChargeHover(ctx, series, frame, xAt, yCharge, yPower, timeSpan) {
+    if (root.chargeHoverX < frame.x || root.chargeHoverX > frame.x + frame.w) return
+
+    var nearest = nearestSample(series, xAt, root.chargeHoverX)
+    var hx = xAt(nearest.t)
+    var base = root.fg
+
+    paintCrosshair(ctx, frame, hx)
+    paintMarker(ctx, hx, yCharge(nearest.p), Qt.rgba(base.r, base.g, base.b, 0.8))
+    paintMarker(ctx, hx, yPower(nearest.w), Color.accent)
+    paintHoverChip(ctx, frame, hx, [
+      { text: Math.round(nearest.p) + "%", color: base },
+      { text: Model.formatWatts(nearest.w), color: Color.accent },
+      { text: Model.hoverTimeLabel(nearest.t, timeSpan), color: Qt.rgba(base.r, base.g, base.b, 0.55) }
+    ])
   }
 
   // The main graph: charge level and power draw on one time axis.
@@ -423,6 +478,8 @@ Panel {
                  frame.x + frame.w / 2, frame.y + frame.h + Style.space(4))
     ctx.textAlign = "right"
     ctx.fillText("now", frame.x + frame.w, frame.y + frame.h + Style.space(4))
+
+    paintChargeHover(ctx, series, frame, xAt, yCharge, yPower, timeSpan)
   }
 
   // ------------------------------------------------------------------ wiring
@@ -507,7 +564,8 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
-      root.hoverX = -1
+      root.healthHoverX = -1
+      root.chargeHoverX = -1
       refresh()
       repaint()
     }
@@ -694,6 +752,19 @@ Panel {
                 var ctx = getContext("2d")
                 if (ctx) root.paintChargePower(ctx, chargeCanvas)
               }
+
+              MouseArea {
+                anchors.fill: parent
+                hoverEnabled: true
+                onPositionChanged: function(mouse) {
+                  root.chargeHoverX = mouse.x
+                  chargeCanvas.requestPaint()
+                }
+                onExited: {
+                  root.chargeHoverX = -1
+                  chargeCanvas.requestPaint()
+                }
+              }
             }
 
             Text {
@@ -800,11 +871,11 @@ Panel {
               anchors.fill: parent
               hoverEnabled: true
               onPositionChanged: function(mouse) {
-                root.hoverX = mouse.x
+                root.healthHoverX = mouse.x
                 healthCanvas.requestPaint()
               }
               onExited: {
-                root.hoverX = -1
+                root.healthHoverX = -1
                 healthCanvas.requestPaint()
               }
             }

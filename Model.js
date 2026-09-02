@@ -636,6 +636,15 @@ function axisTimeLabel(epoch, spanSec) {
   return spanSec > 2 * DAY_SEC ? shortDate(epoch) : formatClock(epoch)
 }
 
+// The label for a hover chip, which names one sample rather than an axis
+// position and so cannot be as terse: across a window wider than a day the
+// clock alone repeats itself, and the date alone cannot place a sample within
+// the day it came from.
+function hoverTimeLabel(epoch, spanSec) {
+  if (spanSec > DAY_SEC) return shortDate(epoch) + " " + formatClock(epoch)
+  return formatClock(epoch)
+}
+
 function statusLabel(probe) {
   var code = statusCode(probe.status)
   if (code === CHARGING) return "Charging"
@@ -805,6 +814,7 @@ if (typeof module !== "undefined") {
     formatSpan: formatSpan,
     formatWindowSpan: formatWindowSpan,
     axisTimeLabel: axisTimeLabel,
+    hoverTimeLabel: hoverTimeLabel,
     statusLabel: statusLabel,
     batteryGlyph: batteryGlyph,
     barText: barText,
