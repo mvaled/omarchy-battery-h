@@ -79,6 +79,9 @@ function defaultProbe() {
     voltDesign: 0,
     current: 0,
     power: 0,
+    // Whether the driver offered a rate at all, which is not the same question
+    // as whether that rate came out to zero. See marksRate().
+    hasRate: false,
     status: "",
     t: 0
   }
@@ -103,11 +106,21 @@ var PROBE_TEXT = {
   status: "status"
 }
 
+// probe.sh omits an attribute it could not read, so a rate key arriving at all
+// means the driver answered — including answering zero, which is a reading and
+// not a gap. Keeping the two apart is what stops a pack that honestly reports
+// no current from being second-guessed by the reservoir.
+function marksRate(key, value) {
+  if (key !== "power" && key !== "current") return false
+  return String(value).length > 0 && isFinite(Number(value))
+}
+
 function assignProbeField(probe, key, value) {
   if (key === "present") {
     probe.present = value === "1"
   } else if (PROBE_NUMERIC[key]) {
     probe[PROBE_NUMERIC[key]] = num(value, key === "cycles" || key === "pct" ? -1 : 0)
+    if (marksRate(key, value)) probe.hasRate = true
   } else if (PROBE_TEXT[key]) {
     probe[PROBE_TEXT[key]] = safeText(value)
   }
@@ -155,6 +168,77 @@ function statusCode(status) {
   return IDLE
 }
 
+// Not every pack reports a rate. `power_now` and `current_now` are optional
+// sysfs attributes, and a driver may publish the file and still fail the read —
+// several HP and older ACPI packs return ENODEV forever, because the embedded
+// controller leaves the _BST rate field at "unknown". On those machines the only
+// evidence of a draw is that the reservoir counter is at a different place than
+// it was last time, so a rate is worked out from the distance between two
+// samples instead of read.
+//
+// A derived rate is an average over a span, not an instant, and the span has to
+// be long because the reservoir counter is coarse. These counters step, and the
+// step is the whole error term: the HP pack this was written against moves
+// `charge_now` in 32 mAh jumps, which on a 12 V pack is 0.39 Wh appearing at
+// once. Divided over ten minutes that single step is 2.3 W of pure quantisation
+// — a quarter of the draw it is supposed to be measuring. Divided over half an
+// hour it is 0.8 W, which the panel can honestly draw.
+//
+// So the span is a window rather than a gap, and the base is taken from the far
+// end of it. The cost is that a derived reading is a trailing average: closing
+// something heavy shows up over the following half hour rather than at once.
+// On a graph a week wide, sampled every ten minutes, that is smoothing rather
+// than lag, and it beats a jagged curve whose teeth are the counter's and not
+// the battery's.
+var DERIVE_MIN_GAP_SEC = 60
+var DERIVE_WINDOW_SEC = 30 * 60
+
+// The sample a derived rate is measured against: the oldest one still inside
+// the window, with the pack in the same state across the whole span.
+//
+// Oldest rather than nearest is what buys the averaging above. Two things end
+// the walk rather than skipping a sample. A sample in a different state, because
+// a span containing a plug-in has no single rate to average over. And a sample
+// past the window, which is also what makes suspended time safe: after a resume
+// the newest sample is hours old, the walk ends on its first step, and no draw
+// is invented out of the time the machine was asleep.
+function deriveBase(recent, probe, code) {
+  var entries = Array.isArray(recent) ? recent : []
+  var base = null
+  for (var index = entries.length - 1; index >= 0; index--) {
+    var entry = entries[index]
+    var gap = probe.t - num(entry.t)
+    if (gap > DERIVE_WINDOW_SEC) break
+    if (Math.round(num(entry.s)) !== code) break
+    if (gap >= DERIVE_MIN_GAP_SEC && num(entry.n) > 0) base = entry
+  }
+  return base
+}
+
+// Signed watts worked out from how far the reservoir actually moved. The sign
+// falls out of the direction it moved, which is firmer evidence than `status`
+// — but the two disagreeing means the counter and the firmware are telling
+// different stories, and a confident number out of that is worse than none.
+function deriveWatts(probe, recent, code) {
+  var base = deriveBase(recent, probe, code)
+  if (!base || probe.now <= 0) return 0
+
+  var gap = probe.t - num(base.t)
+  var delta = probe.now - num(base.n)
+  // An Ah pack counts charge, so its delta only becomes energy at the present
+  // voltage; a Wh pack has already done that conversion in firmware.
+  var microWh = probe.unit === "Wh" ? delta : delta * (probe.volt / 1e6)
+  var value = (microWh / 1e6) * (HOUR_SEC / gap)
+
+  if (!isFinite(value)) return 0
+  if (code === CHARGING && value <= 0) return 0
+  if (code === DISCHARGING && value >= 0) return 0
+  // A firmware recalibration can jump the counter by a good fraction of the
+  // pack in one step, which is not a draw and must not flatten the power axis
+  // for the rest of the window.
+  return Math.max(-MAX_ABS_WATTS, Math.min(MAX_ABS_WATTS, value))
+}
+
 // Signed draw in watts: positive charging, negative discharging, zero when no
 // current is flowing. sysfs reports a magnitude and leaves the direction to
 // `status`, so the sign is taken from there rather than from the number — a few
@@ -163,23 +247,31 @@ function statusCode(status) {
 //
 // power_now is microwatts and authoritative where the driver offers it.
 // Otherwise the pack reports current_now in microamperes, and watts are its
-// product with the present voltage.
-function watts(probe) {
+// product with the present voltage. `recent` is the charge history this reading
+// is about to join, and is consulted only where the driver published neither
+// attribute — never merely because the rate it published came out to zero.
+function watts(probe, recent) {
   if (!probe || !probe.ok) return 0
+
+  var code = statusCode(probe.status)
+  // Idle, full, or held at a charge threshold: whatever trickle the driver
+  // reports is not charge moving in or out of the pack in a way worth drawing.
+  if (code === IDLE) return 0
+
   var magnitude = 0
   if (probe.power > 0) {
     magnitude = probe.power / 1e6
   } else if (probe.volt > 0 && probe.current !== 0) {
     magnitude = (probe.volt / 1e6) * (Math.abs(probe.current) / 1e6)
   }
-  if (!isFinite(magnitude) || magnitude <= 0) return 0
-
-  var code = statusCode(probe.status)
-  if (code === CHARGING) return magnitude
-  if (code === DISCHARGING) return -magnitude
-  // Idle, full, or held at a charge threshold: whatever trickle the driver
-  // reports is not charge moving in or out of the pack in a way worth drawing.
-  return 0
+  if (isFinite(magnitude) && magnitude > 0) {
+    return code === CHARGING ? magnitude : -magnitude
+  }
+  // The driver answered and its answer was zero. Deriving over it would replace
+  // a reading with a guess, so the reservoir is consulted only where the driver
+  // said nothing at all.
+  if (probe.hasRate) return 0
+  return deriveWatts(probe, recent, code)
 }
 
 // ------------------------------------------------------------------ history
@@ -212,7 +304,12 @@ function normalizeChargeEntry(entry) {
     t: Math.floor(num(entry.t)),
     p: Math.max(0, Math.min(100, num(entry.p))),
     s: Math.max(-1, Math.min(1, Math.round(num(entry.s)))),
-    w: Math.max(-MAX_ABS_WATTS, Math.min(MAX_ABS_WATTS, num(entry.w)))
+    w: Math.max(-MAX_ABS_WATTS, Math.min(MAX_ABS_WATTS, num(entry.w))),
+    // The raw reservoir reading behind `p`, in whatever micro-unit this pack
+    // uses. Kept because a pack whose driver reports no rate at all has nothing
+    // but the distance between two of these to work a draw out from. Zero means
+    // the sample predates this field, and derivation just skips it.
+    n: Math.max(0, Math.floor(num(entry.n)))
   }
 }
 
@@ -398,7 +495,10 @@ function recordProbe(state, probe, options) {
       t: now,
       p: probe.pct,
       s: statusCode(probe.status),
-      w: watts(probe)
+      // `charge` is this reading's own past — it does not contain the reading
+      // yet — which is exactly what a rate derived from the reservoir needs.
+      w: watts(probe, charge),
+      n: probe.now
     }, windowSec, now)
   }
 }
@@ -785,6 +885,8 @@ if (typeof module !== "undefined") {
     probeHealth: probeHealth,
     statusCode: statusCode,
     watts: watts,
+    DERIVE_MIN_GAP_SEC: DERIVE_MIN_GAP_SEC,
+    DERIVE_WINDOW_SEC: DERIVE_WINDOW_SEC,
     MAX_ABS_WATTS: MAX_ABS_WATTS,
     defaultHistory: defaultHistory,
     parseHistory: parseHistory,

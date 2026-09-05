@@ -326,6 +326,179 @@ function decayHistory(end, days, fromPct, toPct) {
 }
 
 {
+  // A pack whose driver reports no rate at all — no power_now, and a
+  // current_now whose read fails, which is what several HP and older ACPI packs
+  // do forever. The draw then comes from how far the reservoir moved between
+  // two samples. Anything the panel can compute here it could not show at all
+  // before, so this is the only path that machine ever takes.
+  const T = 1788000000
+  const noRate = (overrides) => Model.parseProbe(probeText(Object.assign({
+    current: null, power: null, now: "4004000", volt: "17745000"
+  }, overrides)))
+
+  // 100 mAh out of a 17.745 V pack over ten minutes is 1.7745 Wh in 1/6 h.
+  const draining = noRate({ status: "Discharging", now: "3904000", t: String(T) })
+  const before = [{ t: T - 600, p: 100, s: -1, w: 0, n: 4004000 }]
+  assert.ok(Math.abs(Model.watts(draining, before) + 10.647) < 1e-6,
+    String(Model.watts(draining, before)))
+
+  // Charging is the same sum with the counter moving the other way.
+  const filling = noRate({ status: "Charging", now: "4104000", t: String(T) })
+  const beforeCharge = [{ t: T - 600, p: 100, s: 1, w: 0, n: 4004000 }]
+  assert.ok(Math.abs(Model.watts(filling, beforeCharge) - 10.647) < 1e-6,
+    String(Model.watts(filling, beforeCharge)))
+
+  // A Wh pack has already turned charge into energy, so voltage stays out of it.
+  const wh = Model.parseProbe(probeText({
+    unit: "Wh", current: null, power: null, status: "Discharging",
+    full: "50000000", design: "56000000", now: "49000000", t: String(T)
+  }))
+  // 1 Wh gone in half an hour is 2 W.
+  const beforeWh = [{ t: T - 1800, p: 100, s: -1, w: 0, n: 50000000 }]
+  assert.ok(Math.abs(Model.watts(wh, beforeWh) + 2) < 1e-9, String(Model.watts(wh, beforeWh)))
+
+  // Inside the floor the counter's own step size dominates the answer, so no
+  // answer is given rather than a fabricated one.
+  const tooClose = T - Math.floor(Model.DERIVE_MIN_GAP_SEC / 2)
+  assert.strictEqual(Model.watts(draining, [{ t: tooClose, p: 100, s: -1, w: 0, n: 4004000 }]), 0)
+
+  // Past the window the gap is suspended time, not a draw. A resume must not
+  // invent a spike out of the hours the machine was asleep.
+  const tooOld = T - Model.DERIVE_WINDOW_SEC - 1
+  assert.strictEqual(Model.watts(draining, [{ t: tooOld, p: 100, s: -1, w: 0, n: 4004000 }]), 0)
+
+  // The base is the oldest sample still inside the window, not the nearest one:
+  // averaging over the longest stable span is what keeps a coarse counter's
+  // step from dominating the answer. Measured against the nearest sample here
+  // the same reading would come out at 6 W rather than 10.647 W.
+  const spread = [
+    { t: T - 1500, p: 100, s: -1, w: 0, n: 4004000 },
+    { t: T - 900, p: 96, s: -1, w: 0, n: 3960000 },
+    { t: T - 300, p: 94, s: -1, w: 0, n: 3930000 }
+  ]
+  const overWindow = Model.parseProbe(probeText({
+    current: null, power: null, status: "Discharging",
+    now: "3754000", volt: "17745000", t: String(T)
+  }))
+  // 250 mAh at 17.745 V over 1500 s.
+  assert.ok(Math.abs(Model.watts(overWindow, spread) + 10.647) < 1e-6,
+    String(Model.watts(overWindow, spread)))
+
+  // A sample that has aged out of the window stops the walk, so the base is the
+  // oldest one still inside it rather than the oldest one on record.
+  const aged = [{ t: tooOld, p: 100, s: -1, w: 0, n: 4104000 }].concat(spread)
+  assert.ok(Math.abs(Model.watts(overWindow, aged) + 10.647) < 1e-6,
+    String(Model.watts(overWindow, aged)))
+
+  // A span containing a plug-in has no single rate to average over, so the walk
+  // back stops at the state change rather than reaching across it.
+  assert.strictEqual(Model.watts(draining, [{ t: T - 600, p: 100, s: 1, w: 0, n: 4004000 }]), 0)
+
+  // A burst of event-driven samples thirty seconds apart must not each read as
+  // zero and draw a sawtooth: they all measure against the same usable point
+  // further back.
+  const burst = [
+    { t: T - 600, p: 100, s: -1, w: 0, n: 4004000 },
+    { t: T - 30, p: 98, s: -1, w: 0, n: 3910000 }
+  ]
+  assert.ok(Math.abs(Model.watts(draining, burst) + 10.647) < 1e-6,
+    String(Model.watts(draining, burst)))
+
+  // The counter moving against what `status` claims means the two disagree, and
+  // a confident number out of that is worse than none.
+  const contrary = noRate({ status: "Discharging", now: "4104000", t: String(T) })
+  assert.strictEqual(Model.watts(contrary, before), 0)
+
+  // Samples stored before `n` existed carry no reservoir reading to measure
+  // against, so they are skipped rather than read as a full-pack jump.
+  assert.strictEqual(Model.watts(draining, [{ t: T - 600, p: 100, s: -1, w: 0 }]), 0)
+
+  // A recalibration can jump the counter by a good fraction of the pack in one
+  // step. That is not a draw, and it must not flatten the power axis.
+  const jumped = noRate({ status: "Discharging", now: "1", t: String(T) })
+  assert.strictEqual(Model.watts(jumped, [{ t: T - 60, p: 100, s: -1, w: 0, n: 4004000 }]),
+    -Model.MAX_ABS_WATTS)
+
+  // No history at all, and the first sample after a fresh install: no draw, no
+  // exception.
+  assert.strictEqual(Model.watts(draining, []), 0)
+  assert.strictEqual(Model.watts(draining, undefined), 0)
+  assert.strictEqual(Model.watts(draining, null), 0)
+
+  // Idle still wins over everything: a pack held at a charge threshold is not
+  // moving charge in or out, whatever the reservoir did.
+  const held = noRate({ status: "Not charging", now: "3904000", t: String(T) })
+  assert.strictEqual(Model.watts(held, before), 0)
+}
+
+{
+  // The Framework 13 shape must be untouched by any of that: it reports
+  // current_now, so the driver's own reading is used and the reservoir is never
+  // consulted — even when the history would have supported a derivation, and
+  // even when that derivation would have disagreed.
+  const T = 1788000000
+  const framework = Model.parseProbe(probeText({
+    status: "Discharging", current: "1200000", now: "3904000", t: String(T)
+  }))
+  const misleading = [{ t: T - 600, p: 100, s: -1, w: 0, n: 4004000 }]
+  assert.ok(Math.abs(Model.watts(framework, misleading) + 21.29) < 0.05,
+    String(Model.watts(framework, misleading)))
+  assert.strictEqual(Model.watts(framework, misleading), Model.watts(framework))
+
+  // A driver that reports a real zero has answered the question, and its answer
+  // stands. Deriving over it would replace a reading with a guess — and this is
+  // the case that separates "the driver said nothing" from "the driver said
+  // none", which sysfs spells identically once the number is parsed.
+  const honestZero = Model.parseProbe(probeText({
+    status: "Discharging", current: "0", now: "3904000", t: String(T)
+  }))
+  assert.strictEqual(honestZero.hasRate, true)
+  assert.strictEqual(Model.watts(honestZero, misleading), 0)
+
+  // The same probe with the attribute absent rather than zero does derive.
+  const silent = Model.parseProbe(probeText({
+    status: "Discharging", current: null, power: null, now: "3904000", t: String(T)
+  }))
+  assert.strictEqual(silent.hasRate, false)
+  assert.ok(Model.watts(silent, misleading) < 0, String(Model.watts(silent, misleading)))
+
+  // A zero power_now counts as an answer just as a zero current_now does.
+  const zeroPower = Model.parseProbe(probeText({
+    status: "Discharging", current: null, power: "0", now: "3904000", t: String(T)
+  }))
+  assert.strictEqual(Model.watts(zeroPower, misleading), 0)
+
+  // And so must a pack that reports power_now.
+  const viaPower = Model.parseProbe(probeText({
+    status: "Discharging", power: "15000000", now: "3904000", t: String(T)
+  }))
+  assert.ok(Math.abs(Model.watts(viaPower, misleading) + 15) < 1e-9)
+}
+
+{
+  // End to end: two probes of a no-rate pack, recorded ten minutes apart, put a
+  // real draw on the curve — and the reservoir reading that made it possible
+  // survives a round trip through the file.
+  const T = 1788000000
+  const reading = (t, now, status) => Model.parseProbe(probeText({
+    current: null, power: null, now: String(now), volt: "17745000",
+    pct: "90", status: status, t: String(t)
+  }))
+
+  let state = Model.recordProbe(Model.defaultHistory(), reading(T, 4004000, "Discharging"), {})
+  // The first sample has nothing behind it, so it honestly reports nothing.
+  assert.strictEqual(state.charge[0].w, 0)
+  assert.strictEqual(state.charge[0].n, 4004000)
+
+  state = Model.recordProbe(state, reading(T + 600, 3904000, "Discharging"), {})
+  assert.ok(Math.abs(state.charge[1].w + 10.647) < 1e-6, String(state.charge[1].w))
+
+  const reloaded = Model.parseHistory(Model.serializeHistory(state))
+  assert.deepStrictEqual(reloaded.charge, state.charge)
+  assert.strictEqual(reloaded.charge[1].n, 3904000)
+}
+
+{
   // The power axis is symmetric so charging and discharging share a scale, and
   // floored so a quiet pack does not get a hair-trigger axis.
   assert.strictEqual(Model.powerScale([]), 5)

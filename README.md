@@ -30,6 +30,18 @@ Charge and power share one time axis over the past week.
 
 Watts come from `power_now` where the driver exposes it, and otherwise from `voltage_now × current_now`. sysfs reports a magnitude and leaves the direction to `status`, so the sign is taken from there — a few drivers do sign `current_now`, which is why the magnitude is taken absolute first rather than trusted.
 
+### Packs that report no rate at all
+
+`power_now` and `current_now` are both optional, and a driver may publish the file and still fail every read — several HP and older ACPI packs return `ENODEV` forever, because the embedded controller leaves the `_BST` rate field at "unknown".  On those machines there is no rate to read, so one is worked out instead, from how far `charge_now` moved between two samples.
+
+This is a real number rather than an estimate of one — it is exactly the energy that left or entered the pack, over exactly the time it took — but it is an **average over a half-hour window rather than an instant**, and it is measured against the oldest sample still inside that window.  The window has to be that wide because the counter is coarse: this HP pack moves `charge_now` in 32 mAh steps, which on a 12 V pack is 0.39 Wh arriving all at once.  Spread over ten minutes that single step is 2.3 W of pure quantisation; spread over half an hour it is 0.8 W, which is honest enough to draw.
+
+What that costs is immediacy: closing something heavy shows up over the following half hour rather than at once.  On a graph a week wide it reads as smoothing rather than lag, and it beats a curve whose teeth belong to the counter rather than to the battery.
+
+Three things make the derivation stand down and report nothing rather than guess.  A span shorter than a minute, where the counter's step is the entire answer.  A span crossing a plug-in or unplug, which has no single rate to average over.  And a span longer than the window — which is also what makes suspend safe, since after a resume the newest sample is hours old and no draw is invented out of the time the machine was asleep.  The first reading after a fresh install, a resume, or a state change therefore shows `0 W` until a second sample exists to measure against.
+
+Machines whose driver does report a rate — the Framework 13 among them — never reach any of this.  The driver's own reading is authoritative and is used untouched.
+
 The axis is **a week wide, but never wider than the data**: with three hours of history it draws three hours across the full frame, rather than a hairline against six empty days.  The header states the span actually drawn.
 
 ## What it shows
@@ -123,13 +135,13 @@ One JSON file, `~/.local/state/io.github.mvaled.battery-health/history.json`:
   "battery": "BAT1",
   "unit": "Ah",
   "health": [{"t": 1788300000, "full": 4004000, "design": 3915000, "cyc": 2}],
-  "charge": [{"t": 1788324982, "p": 63, "s": -1, "w": -14.2}]
+  "charge": [{"t": 1788324982, "p": 63, "s": -1, "w": -14.2, "n": 2523000}]
 }
 ```
 
 `health` is a **change-point series**.  `charge_full` only moves when the firmware recalibrates, so storing every poll would be thousands of identical rows — but bucketing to a day would throw away *when* the capacity actually changed, which is the interesting part.  So a row is written when a value differs from the last one on record, plus a heartbeat every six hours to prove a quiet stretch was observed rather than unmonitored.  Timestamps are exact.
 
-`charge` holds every sample inside the graph window — a week by default, which is what lets the axis reach back that far.  `s` is the charge direction (`1` charging, `0` idle, `-1` discharging) and `w` is the signed draw in watts.  A heavy week lands in the low thousands of samples; the cap leaves room above that and still keeps the file well under a megabyte.
+`charge` holds every sample inside the graph window — a week by default, which is what lets the axis reach back that far.  `s` is the charge direction (`1` charging, `0` idle, `-1` discharging), `w` is the signed draw in watts, and `n` is the raw `charge_now` or `energy_now` reading behind `p`, in the micro-unit sysfs used.  `n` is what lets a pack with no rate attribute derive `w` at all; on a pack that reports a rate it is simply along for the ride.  Rows written before `n` existed are read back with `n: 0`, which the derivation skips rather than mistaking for an empty pack.  A heavy week lands in the low thousands of samples; the cap leaves room above that and still keeps the file well under a megabyte.
 
 Both arrays are capped inside `Model.js` independently of the retention settings, so a corrupt or hand-grown file cannot make a repaint unbounded.  At the maximum retention the file is a few hundred kilobytes.
 
@@ -172,6 +184,8 @@ make sample   # run the probe against this machine
 ## Requirements
 
 Omarchy 4.x with the Quickshell-based `omarchy-shell`, and a battery that exposes `charge_full_design` or `energy_full_design` in `/sys/class/power_supply`.  Machines without one show "No battery detected" rather than a broken widget.
+
+A rate attribute is **not** required.  `power_now` and `current_now` are used where the driver offers them; where it offers neither — or publishes the file and fails the read, as several HP and older ACPI packs do — the draw is [derived from `charge_now` over time](#packs-that-report-no-rate-at-all) instead.
 
 ## Licence
 

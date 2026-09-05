@@ -89,6 +89,32 @@ check "energy pack design capacity" 56000000 "$(field "$out" design)"
 check "absent cycle_count is omitted" "" "$(field "$out" cycles)"
 check "energy pack reports power_now" 15000000 "$(field "$out" power)"
 
+# ------------------------------------------------- a pack with no rate at all
+
+# Several HP and older ACPI packs publish current_now and then fail every read
+# with ENODEV, because the embedded controller leaves the _BST rate field at
+# "unknown". read_attr comes back empty from that, and an empty attribute is
+# omitted rather than emitted as zero — which is what lets the panel tell "no
+# rate available, derive one" apart from "a real reading of zero".
+norate_root=$fixture/norate
+make_supply "$norate_root" BAT0 Battery
+put "$norate_root/BAT0/charge_full" 2688000
+put "$norate_root/BAT0/charge_full_design" 2688000
+put "$norate_root/BAT0/charge_now" 2656000
+put "$norate_root/BAT0/voltage_now" 12909000
+put "$norate_root/BAT0/capacity" 99
+put "$norate_root/BAT0/status" Discharging
+: > "$norate_root/BAT0/current_now"
+
+out=$(OMARCHY_BATTERY_HEALTH_SUPPLY_DIR=$norate_root bash "$probe")
+check "an unreadable current_now is omitted, not zeroed" "" "$(field "$out" current)"
+check "an absent power_now is omitted too" "" "$(field "$out" power)"
+# The reservoir reading and the voltage are what a derived rate is built from,
+# so they have to survive even when nothing else about the draw does.
+check "the reservoir reading still comes through" 2656000 "$(field "$out" now)"
+check "the voltage still comes through" 12909000 "$(field "$out" volt)"
+check "the direction still comes through" Discharging "$(field "$out" status)"
+
 # --------------------------------------------------- picking among several
 
 multi_root=$fixture/multi

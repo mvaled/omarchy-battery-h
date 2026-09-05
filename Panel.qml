@@ -739,7 +739,10 @@ Panel {
               text: {
                 var parts = []
                 if (root.probe.pct >= 0) parts.push(root.probe.pct + "%")
-                parts.push(Model.formatWatts(Model.watts(root.probe)))
+                // The history already carries this reading, and a rate derived
+                // from the reservoir needs the samples behind it, so the
+                // readout is computed against the same series the curve is.
+                parts.push(Model.formatWatts(Model.watts(root.probe, root.history.charge)))
                 return parts.join("  \u00b7  ")
               }
               color: Qt.darker(root.fg, 1.4)
