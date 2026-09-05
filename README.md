@@ -38,7 +38,9 @@ This is a real number rather than an estimate of one — it is exactly the energ
 
 What that costs is immediacy: closing something heavy shows up over the following half hour rather than at once.  On a graph a week wide it reads as smoothing rather than lag, and it beats a curve whose teeth belong to the counter rather than to the battery.
 
-Three things make the derivation stand down and report nothing rather than guess.  A span shorter than a minute, where the counter's step is the entire answer.  A span crossing a plug-in or unplug, which has no single rate to average over.  And a span longer than the window — which is also what makes suspend safe, since after a resume the newest sample is hours old and no draw is invented out of the time the machine was asleep.  The first reading after a fresh install, a resume, or a state change therefore shows `0 W` until a second sample exists to measure against.
+Three things make the derivation stand down and report nothing rather than guess.  A span shorter than five minutes, where a single counter step is most of the answer — one 32 mAh step across a minute reads as 22.7 W on this pack, twice the draw it is meant to be measuring, whereas across five minutes it is 4.5 W.  A span crossing a plug-in or unplug, which has no single rate to average over.  And a span longer than the window — which is also what makes suspend safe, since after a resume the newest sample is hours old and no draw is invented out of the time the machine was asleep.
+
+So the first reading after a fresh install, a resume, or a plug-in shows `0 W` for about five minutes, until a sample old enough to measure against exists.  It then starts wide and tightens as the window fills.
 
 Machines whose driver does report a rate — the Framework 13 among them — never reach any of this.  The driver's own reading is authoritative and is used untouched.
 

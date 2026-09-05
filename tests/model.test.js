@@ -416,8 +416,8 @@ function decayHistory(end, days, fromPct, toPct) {
   // A recalibration can jump the counter by a good fraction of the pack in one
   // step. That is not a draw, and it must not flatten the power axis.
   const jumped = noRate({ status: "Discharging", now: "1", t: String(T) })
-  assert.strictEqual(Model.watts(jumped, [{ t: T - 60, p: 100, s: -1, w: 0, n: 4004000 }]),
-    -Model.MAX_ABS_WATTS)
+  const clampBase = [{ t: T - Model.DERIVE_MIN_GAP_SEC, p: 100, s: -1, w: 0, n: 4004000 }]
+  assert.strictEqual(Model.watts(jumped, clampBase), -Model.MAX_ABS_WATTS)
 
   // No history at all, and the first sample after a fresh install: no draw, no
   // exception.

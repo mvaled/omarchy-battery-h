@@ -190,7 +190,15 @@ function statusCode(status) {
 // On a graph a week wide, sampled every ten minutes, that is smoothing rather
 // than lag, and it beats a jagged curve whose teeth are the counter's and not
 // the battery's.
-var DERIVE_MIN_GAP_SEC = 60
+// The floor matters most right after a state change, when the window holds a
+// single sample and that one gap is the whole error budget. A minute is not
+// enough: one 32 mAh step across sixty seconds reads as 22.7 W on this pack,
+// twice the draw it is meant to be measuring, and that is what the first
+// reading after a plug-in actually showed. Five minutes bounds the same single
+// step to 4.5 W. In steady state it costs nothing — the default cadence is ten
+// minutes anyway — and all it delays is how soon the first reading after a
+// plug-in, a resume or a fresh install arrives.
+var DERIVE_MIN_GAP_SEC = 300
 var DERIVE_WINDOW_SEC = 30 * 60
 
 // The sample a derived rate is measured against: the oldest one still inside
