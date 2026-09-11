@@ -50,7 +50,7 @@ The axis is **a week wide, but never wider than the data**: with three hours of 
 
 | Field | Meaning |
 |---|---|
-| Health % | `charge_full / charge_full_design`. Above 100% is normal on a new pack — firmware often rates conservatively, and the value is deliberately not clamped. |
+| Health % | `charge_full / charge_full_design`. Above 100% is normal on a new pack — firmware often rates conservatively, and the number here is deliberately not clamped.  The graph is — see below. |
 | Full charge | What the pack holds today, in the unit sysfs reports (mAh or Wh). |
 | Design | What it was rated for when new. |
 | Energy | Watt-hours. Derived from mAh × design voltage when the battery reports charge rather than energy. |
@@ -66,6 +66,8 @@ Several of these deliberately show `—` rather than a number:
 - **Reaches 80%** appears only for a battery that is actually declining.  A flat or improving one would need a fabricated slope to produce a date, and a pack already below 80% has nothing left to project.
 
 The 80% line is drawn on the health graph only when it is in view — a healthy battery is not permanently reminded of its mortality.
+
+The health graph itself is damped: whole percent, and never above 100%.  A pack that reports 102.5% one day and 101.6% the next has not worn half a percent, it has recalibrated, and drawn at full resolution that wobble becomes a staircase that reads as decline.  A pack still at or above its nameplate therefore draws a flat line on the 100% gridline, which is the honest picture of a battery that has not measurably aged.  The hover chip names the damped reading, because it labels the point it sits on; the numbers beside the graph and `make state` keep the raw one.
 
 One thing worth being blunt about: health is the battery controller's own self-report.  `charge_full` is the firmware's estimate of present full capacity, and it only updates when the firmware recalibrates — usually after a full charge.  This plugin measures nothing itself; it does not integrate the watt-hours from the charge and power series to derive capacity independently.  So health here means *what the pack's controller currently claims it can hold, against its nameplate*.  It moves in steps rather than smoothly, and a pack held at a charge limit that never recalibrates can read optimistically.
 

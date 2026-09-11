@@ -191,7 +191,7 @@ Panel {
     ctx.reset()
     ctx.clearRect(0, 0, canvas.width, canvas.height)
 
-    var series = Model.healthSeries(root.history.health)
+    var series = Model.graphHealthSeries(root.history.health)
     var frame = plotRect(canvas, Style.space(34), Style.space(6), Style.space(4), Style.space(16))
     var base = root.fg
 
@@ -349,8 +349,10 @@ Panel {
 
     paintCrosshair(ctx, frame, hx)
     paintMarker(ctx, hx, yAt(nearest.pct), root.healthColor)
+    // Whole percent, because the chip labels the marker it sits on and the
+    // series behind both is damped. The undamped reading is in the table.
     paintHoverChip(ctx, frame, hx, frame.y, [
-      { text: Model.formatPercent(nearest.pct), color: root.healthColor },
+      { text: Model.formatPercent(nearest.pct, 0), color: root.healthColor },
       { text: Model.shortDate(nearest.t), color: root.healthColor }
     ])
   }

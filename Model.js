@@ -603,6 +603,19 @@ function healthSeries(health) {
   })
 }
 
+// The curve as the health graph draws it: whole percent, and never above 100.
+// A pack's reported full capacity wobbles by a fraction of a percent with
+// temperature and recalibration, and a conservatively rated pack sits above
+// its design capacity for years; neither is wear, but at full resolution both
+// turn a flat line into a staircase that reads as one. The numbers beside the
+// graph stay raw — they are the ones worth checking against sysfs — so the
+// damping lives here rather than in healthSeries.
+function graphHealthSeries(health) {
+  return healthSeries(health).map(function (point) {
+    return { t: point.t, pct: Math.min(100, Math.round(point.pct)), cyc: point.cyc }
+  })
+}
+
 function wearStats(health, now) {
   var points = healthSeries(health)
   var stats = {
@@ -909,6 +922,7 @@ if (typeof module !== "undefined") {
     recordProbe: recordProbe,
     mergeHistories: mergeHistories,
     healthSeries: healthSeries,
+    graphHealthSeries: graphHealthSeries,
     nextHealthSampleAt: nextHealthSampleAt,
     wearStats: wearStats,
     chargeSeries: chargeSeries,
