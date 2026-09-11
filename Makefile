@@ -20,7 +20,7 @@ help:
 	@printf '  reload     make the running shell re-read the plugin\n'
 	@printf '  open       open the panel over IPC\n'
 	@printf '  sample     run probe.sh against this machine\n'
-	@printf '  state      show the persisted history summary\n'
+	@printf '  state      show the persisted history summary and recent samples\n'
 	@printf '  reset      delete the persisted history (irreversible)\n'
 
 .PHONY: check

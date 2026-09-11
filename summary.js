@@ -33,3 +33,36 @@ const rows = [
 
 const width = Math.max(...rows.map((row) => row[0].length))
 rows.forEach((row) => console.log(row[0].padEnd(width) + "  " + row[1]))
+
+// The tail of the charge log. The summary above says how the pack is aging
+// over months; these rows say what it has been doing in the last hours, which
+// is what a sampling or wattage question actually needs.
+const TAIL = 35
+
+function statusName(code) {
+  if (code === Model.CHARGING) return "charging"
+  if (code === Model.DISCHARGING) return "discharging"
+  return "idle"
+}
+
+const recent = state.charge.slice(-TAIL)
+if (recent.length > 0) {
+  // hoverTimeLabel drops the date when the span fits in a day, so the tail
+  // gets dated rows only when it really straddles more than one.
+  const span = recent[recent.length - 1].t - recent[0].t
+  const cells = recent.map((entry) => [
+    Model.hoverTimeLabel(entry.t, span),
+    Model.formatPercent(entry.p),
+    Model.formatWatts(entry.w),
+    statusName(entry.s)
+  ])
+  const widths = cells[0].map((_, column) => Math.max(...cells.map((row) => row[column].length)))
+  console.log("")
+  console.log("last " + cells.length + " charge samples")
+  cells.forEach((row) => console.log(
+    "  " + row[0].padEnd(widths[0]) +
+    "  " + row[1].padStart(widths[1]) +
+    "  " + row[2].padStart(widths[2]) +
+    "  " + row[3]
+  ))
+}
