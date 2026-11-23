@@ -28,7 +28,7 @@ check: lint test
 
 .PHONY: lint
 lint:
-	bash -n probe.sh tests/probe.test.sh
+	bash -n probe.sh charge-limit.sh tests/probe.test.sh
 	node --check Model.js
 	node --check summary.js
 	node --check tests/model.test.js

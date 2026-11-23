@@ -83,6 +83,8 @@ function defaultProbe() {
     // as whether that rate came out to zero. See marksRate().
     hasRate: false,
     status: "",
+    // The tool that can lift the charge limit, or "" when none is installed.
+    limiter: "",
     t: 0
   }
 }
@@ -103,7 +105,8 @@ var PROBE_NUMERIC = {
 var PROBE_TEXT = {
   battery: "battery",
   unit: "unit",
-  status: "status"
+  status: "status",
+  limiter: "limiter"
 }
 
 // probe.sh omits an attribute it could not read, so a rate key arriving at all
@@ -890,6 +893,108 @@ function timeTicks(from, to, count) {
   return ticks
 }
 
+// ------------------------------------------------------------ charge limit
+
+// A pack counts as having reached full at this level rather than at exactly
+// 100%, because many firmwares stop and report 99% for a pack that is as full
+// as it will get.
+var TOPUP_FULL_PCT = 99
+
+// Parses the state file charge-limit.sh writes while a top-up is pending.
+// Returns null for a missing, empty or malformed file: all three mean there is
+// nothing to restore, and a malformed one is better left for charge-limit.sh
+// to overwrite than acted on.
+function parseTopUp(raw) {
+  var data
+  try {
+    data = JSON.parse(String(raw || ""))
+  } catch (e) {
+    return null
+  }
+  if (!data || typeof data !== "object") return null
+  var restore = Math.round(num(data.restore, 0))
+  var since = num(data.since, 0)
+  if (restore < 1 || restore > 100 || since <= 0) return null
+  return { restore: restore, since: since }
+}
+
+// Whether a pending top-up has done its job and the old limit should go back:
+// the pack reached full at some point since `topUp.since`, and it is now
+// running off the battery.  Requiring the full charge first is what keeps an
+// unplug halfway through the charge from undoing the top-up; the history is
+// consulted rather than the live reading because the pack is usually below
+// full again by the time anyone unplugs.
+function topUpSpent(topUp, charge, probe) {
+  if (!topUp || !probe || !probe.ok) return false
+  if (statusCode(probe.status) !== DISCHARGING) return false
+  if (probe.pct >= TOPUP_FULL_PCT) return true
+  var since = topUp.since
+  return (charge || []).some(function (entry) {
+    return entry.t >= since && entry.p >= TOPUP_FULL_PCT
+  })
+}
+
+// Parses the `standard-limit` file: the limit the pack is normally held at.
+// Returns 0 when it is unknown, which disables every rule that needs it.
+function parseStandardLimit(raw) {
+  var limit = Math.round(num(String(raw || "").trim(), 0))
+  return limit >= 1 && limit <= 100 ? limit : 0
+}
+
+// The limit a pack is visibly being held at, or 0.  On AC, a pack the EC has
+// stopped below full reports "Not charging", and the level it stopped at is
+// the limit.  This is how the standard limit is learned without root before
+// the first top-up ever runs.  It is only a lower bound, since an EC with
+// hysteresis may hold a point or two under its limit, so callers should only
+// ever raise a learned value with it, never lower one.
+function heldLimit(probe, onBattery) {
+  if (onBattery || !probe || !probe.ok) return 0
+  if (String(probe.status).toLowerCase() !== "not charging") return 0
+  return probe.pct > 0 && probe.pct < TOPUP_FULL_PCT ? probe.pct : 0
+}
+
+// Whether lifting the limit is worth offering at all.  Not on battery, where
+// nothing can charge; not on a full pack; and not while the pack is already
+// charging past its standard limit, which is true while a top-up is pending
+// and also when the limit was lifted some other way.  With no standard limit
+// known yet only the pending top-up can tell, so the last rule waits for one.
+function topUpOffered(probe, onBattery, topUp, standardLimit) {
+  if (onBattery || topUp || !probe || !probe.ok) return false
+  if (probe.pct >= TOPUP_FULL_PCT) return false
+  var charging = statusCode(probe.status) === CHARGING
+  return !(charging && standardLimit > 0 && probe.pct > standardLimit)
+}
+
+// The tooltip for the top-up button, which doubles as its only status line.
+function topUpTooltip(busy, error) {
+  if (busy) return "Waiting for authentication…"
+  var lines = ["Charge to 100% once", "Lifts the charge limit until the next unplug after a full charge"]
+  if (error) lines.push(error)
+  return lines.join("\n")
+}
+
+// charge-limit.sh's exit codes, worded for the tooltip.  0 has no message.
+function topUpError(code) {
+  if (code === 0) return ""
+  if (code === 126 || code === 127) return "Not authorized: the limit was not changed"
+  if (code === 3) return "framework_tool could not read the charge limit"
+  if (code === 4) return "The EC did not accept the new charge limit"
+  return "charge-limit.sh failed (exit " + code + ")"
+}
+
+// Lucide's battery-full icon (https://lucide.dev/icons/battery-full), ISC
+// licence, copyright (c) Lucide Contributors 2022, portions copyright (c) Cole
+// Bemis 2013-2022 as part of Feather (MIT).  Inlined as a string rather than
+// shipped as a file so the stroke can take the theme colour: an SVG loaded by
+// Image cannot be recoloured without a shader, but one built here can simply
+// be written in the right colour.
+function batteryFullSvg(cssColor) {
+  return '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" ' +
+    'fill="none" stroke="' + cssColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M10 10v4"/><path d="M14 10v4"/><path d="M22 14v-4"/><path d="M6 10v4"/>' +
+    '<rect x="2" y="6" width="16" height="12" rx="2"/></svg>'
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     DAY_SEC: DAY_SEC,
@@ -948,6 +1053,15 @@ if (typeof module !== "undefined") {
     formatWatts: formatWatts,
     axisTicks: axisTicks,
     timeTicks: timeTicks,
-    shortDate: shortDate
+    shortDate: shortDate,
+    TOPUP_FULL_PCT: TOPUP_FULL_PCT,
+    parseTopUp: parseTopUp,
+    topUpSpent: topUpSpent,
+    parseStandardLimit: parseStandardLimit,
+    heldLimit: heldLimit,
+    topUpOffered: topUpOffered,
+    topUpTooltip: topUpTooltip,
+    topUpError: topUpError,
+    batteryFullSvg: batteryFullSvg
   }
 }

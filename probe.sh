@@ -89,4 +89,9 @@ emit current "$(read_attr "$dir/current_now")"
 emit power "$(read_attr "$dir/power_now")"
 emit voltdesign "$(read_attr "$dir/voltage_min_design")"
 emit status "$(read_attr "$dir/status")"
+# Whether the charge limit can be lifted from the panel.  Reported here rather
+# than by a probe of its own so detection rides on the one Process the widget
+# already runs, and so installing the tool shows up at the next sample without
+# a shell restart.
+command -v framework_tool >/dev/null 2>&1 && emit limiter framework_tool
 emit t "$(date +%s)"
