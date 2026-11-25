@@ -903,8 +903,10 @@ var FULL_PCT = 99
 // standard limit has ever been learned.
 var DEFAULT_STANDARD_LIMIT = 80
 
-// How far under its limit an EC may hold a pack and still count as holding it
-// at that limit: some ECs stop a point or two early to avoid trickle-charging.
+// How far from its limit an EC may hold a pack and still count as holding it
+// at that limit.  Charging up, some ECs stop a point or two early to avoid
+// trickle-charging; draining down to a lowered limit, the Framework 13 EC
+// stops a point above it (measured: limit 80%, held at 81%).
 var HELD_SLACK_PCT = 2
 
 // Parses a bare-number limit file (`charge-limit` or `standard-limit`).
@@ -916,9 +918,9 @@ function parseLimit(raw) {
 
 // The limit a pack is visibly being held at, or 0.  On AC, a pack the EC has
 // stopped below full reports "Not charging", and the level it stopped at is
-// the limit.  It is only a lower bound, since an EC with hysteresis may hold a
-// point or two under its limit, so callers should only ever raise a learned
-// value with it, never lower one.  `onBattery` must come from the AC state,
+// the limit, give or take HELD_SLACK_PCT, so it is only a guess: callers should
+// use it when nothing better is known, never over a value framework_tool
+// reported.  `onBattery` must come from the AC state,
 // not the battery status: the EC reports "Discharging" while it drains a pack
 // down to a lowered limit on AC.
 function heldLimit(probe, onBattery) {
@@ -929,14 +931,14 @@ function heldLimit(probe, onBattery) {
 
 // The charge limit as far as sysfs gives it away, or 0 when it does not.  On
 // AC, a pack charging past the standard limit means the limit is 100%, and a
-// pack held at the standard limit (or within HELD_SLACK_PCT under it) means
+// pack held at the standard limit (or within HELD_SLACK_PCT of it) means
 // the limit is the standard one.  On battery, below the standard limit while
 // charging, or with the standard limit unknown, nothing can be told apart.
 function inferLimit(probe, onBattery, standardLimit) {
   if (onBattery || !probe || !probe.ok || !(standardLimit > 0)) return 0
   if (statusCode(probe.status) === CHARGING && probe.pct > standardLimit) return 100
   var held = heldLimit(probe, onBattery)
-  return held > 0 && held <= standardLimit && held >= standardLimit - HELD_SLACK_PCT
+  return held > 0 && Math.abs(held - standardLimit) <= HELD_SLACK_PCT
     ? standardLimit
     : 0
 }

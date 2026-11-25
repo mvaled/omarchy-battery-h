@@ -165,11 +165,14 @@ Panel {
     root.runChargeLimit(["refresh", root.stateDir])
   }
 
-  // Not while the limit is 100%: an EC that lets a full pack sag a few points
-  // before topping it up again would otherwise teach a bogus standard limit.
+  // Only while the standard limit is unknown: where the EC holds a pack is off
+  // by a point or so either way, and framework_tool's own answer, recorded by
+  // every write and refresh, must not be overwritten by it.  Not while the
+  // limit is 100% either, where a full pack sagging a few points before the EC
+  // tops it up again would teach a bogus value.
   function learnStandardLimit(probe) {
     var held = Model.heldLimit(probe, UPower.onBattery)
-    if (root.chargeLimit === 100 || held <= root.standardLimit) return
+    if (root.standardLimit > 0 || root.chargeLimit === 100 || held <= 0) return
     root.standardLimit = held
     standardLimitFile.setText(held + "\n")
   }
