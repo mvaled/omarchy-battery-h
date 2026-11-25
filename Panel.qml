@@ -62,7 +62,7 @@ Panel {
   readonly property string historyPath: stateDir + "/history.json"
   readonly property string probePath: Qt.resolvedUrl("probe.sh").toString().replace("file://", "")
   readonly property string chargeLimitPath: Qt.resolvedUrl("charge-limit.sh").toString().replace("file://", "")
-  readonly property string topUpPath: stateDir + "/charge-limit.json"
+  readonly property string chargeLimitFilePath: stateDir + "/charge-limit"
   readonly property string standardLimitPath: stateDir + "/standard-limit"
 
   // ------------------------------------------------------------- live state
@@ -121,48 +121,57 @@ Panel {
   }
   readonly property bool collecting: stats.points < 2
 
-  // ------------------------------------------------------- charge to 100%
+  // ------------------------------------------------------------ charge limit
 
-  // The pending top-up, as charge-limit.sh last wrote it, or null.  The file
-  // is shared by every instance, so whichever one the user clicked, all of
-  // them show the same state and any of them can restore.
-  property var topUp: null
-  property string topUpErrorText: ""
+  // The limit charge-limit.sh last wrote or read, or 0 while unknown.  Reading
+  // it from the EC needs root, so this record stands in for it, corrected by
+  // what sysfs gives away (inferredLimit) and by an explicit refresh.
+  property int rememberedLimit: 0
   // The limit the pack is normally held at, or 0 while still unknown.
   property int standardLimit: 0
-  readonly property bool canTopUp: probe.limiter === "framework_tool"
-  readonly property bool topUpBusy: chargeLimitProc.running
-  // Kept on screen while a prompt is up, or the click would seem to have done
-  // nothing until the prompt is answered.
-  readonly property bool topUpVisible: canTopUp
-    && (topUpBusy || Model.topUpOffered(probe, UPower.onBattery, topUp, standardLimit))
+  property string chargeLimitErrorText: ""
+  readonly property bool canSetLimit: probe.limiter === "framework_tool"
+  readonly property bool chargeLimitBusy: chargeLimitProc.running
+  readonly property int inferredLimit: Model.inferLimit(probe, UPower.onBattery, standardLimit)
+  readonly property int chargeLimit: inferredLimit || rememberedLimit
+  readonly property int nextChargeLimit: Model.nextLimit(chargeLimit, standardLimit)
 
-  function runChargeLimit(action) {
-    if (chargeLimitProc.running) return
-    root.topUpErrorText = ""
-    chargeLimitProc.command = [root.chargeLimitPath, action, root.topUpPath]
+  // What sysfs shows is newer than the record whenever the two disagree: the EC
+  // may have reset its limit, or something outside the widget changed it.
+  onInferredLimitChanged: {
+    if (inferredLimit > 0 && inferredLimit !== rememberedLimit) {
+      rememberedLimit = inferredLimit
+      chargeLimitFile.setText(inferredLimit + "\n")
+    }
+  }
+
+  // A QML colour as CSS, for the inline SVG icons.
+  function cssRgb(c) {
+    return "rgb(" + Math.round(c.r * 255) + "," + Math.round(c.g * 255) + "," + Math.round(c.b * 255) + ")"
+  }
+
+  function runChargeLimit(args) {
+    if (chargeLimitProc.running || !root.canSetLimit) return
+    root.chargeLimitErrorText = ""
+    chargeLimitProc.command = [root.chargeLimitPath].concat(args)
     chargeLimitProc.running = true
   }
 
-  function toggleTopUp() {
-    if (!root.canTopUp) return
-    root.runChargeLimit(root.topUp ? "restore" : "topup")
+  function toggleChargeLimit() {
+    root.runChargeLimit(["apply", String(root.nextChargeLimit), root.stateDir])
   }
 
-  // Level-triggered on purpose: it is evaluated after every sample rather than
-  // on the unplug event alone, so a shell restarted while unplugged still
-  // restores.  A dismissed prompt cannot loop, because charge-limit.sh then
-  // moves `since` forward and topUpSpent waits for the next full charge.
+  function refreshChargeLimit() {
+    root.runChargeLimit(["refresh", root.stateDir])
+  }
+
+  // Not while the limit is 100%: an EC that lets a full pack sag a few points
+  // before topping it up again would otherwise teach a bogus standard limit.
   function learnStandardLimit(probe) {
     var held = Model.heldLimit(probe, UPower.onBattery)
-    if (root.topUp || held <= root.standardLimit) return
+    if (root.chargeLimit === 100 || held <= root.standardLimit) return
     root.standardLimit = held
     standardLimitFile.setText(held + "\n")
-  }
-
-  function restoreSpentTopUp() {
-    if (root.topUp && Model.topUpSpent(root.topUp, root.history.charge, root.probe))
-      root.runChargeLimit("restore")
   }
 
   // --------------------------------------------------------------- sampling
@@ -196,11 +205,10 @@ Panel {
     historyFile.setText(Model.serializeHistory(next))
     repaint()
     // Re-read rather than trusted from the watcher: FileView cannot watch a
-    // file that does not exist yet, so a top-up started from the instance on
-    // the other monitor would otherwise go unnoticed here.  The decision to
-    // restore is taken once the fresh content is in, in onLoaded.
+    // file that does not exist yet, so a limit first written from the instance
+    // on the other monitor would otherwise go unnoticed here.
     if (parsed.limiter !== "") {
-      topUpFile.reload()
+      chargeLimitFile.reload()
       standardLimitFile.reload()
       root.learnStandardLimit(parsed)
     }
@@ -561,7 +569,8 @@ Panel {
     function toggle(): void { root.toggle() }
     function refresh(): void { root.refresh(true) }
     function cycleDisplay(): void { root.cycleDisplayMode() }
-    function chargeFull(): void { root.toggleTopUp() }
+    function toggleChargeLimit(): void { root.toggleChargeLimit() }
+    function refreshChargeLimit(): void { root.refreshChargeLimit() }
   }
 
   Process {
@@ -587,31 +596,21 @@ Panel {
   Process {
     id: chargeLimitProc
     onExited: function(exitCode) {
-      root.topUpErrorText = Model.topUpError(exitCode)
-      topUpFile.reload()
+      root.chargeLimitErrorText = Model.chargeLimitError(exitCode)
+      chargeLimitFile.reload()
       standardLimitFile.reload()
     }
   }
 
   FileView {
-    id: topUpFile
-    path: root.topUpPath
+    id: chargeLimitFile
+    path: root.chargeLimitFilePath
+    atomicWrites: true
     printErrors: false
     watchChanges: true
     onFileChanged: reload()
-    onLoaded: {
-      root.topUp = Model.parseTopUp(text())
-      // The limit to restore came from framework_tool itself, so it is as
-      // authoritative as the standard-limit file, and it covers a top-up
-      // started before that file existed.
-      if (root.topUp && root.topUp.restore !== root.standardLimit) {
-        root.standardLimit = root.topUp.restore
-        standardLimitFile.setText(root.topUp.restore + "\n")
-      }
-      root.restoreSpentTopUp()
-    }
-    // No file is the normal state: no top-up pending.
-    onLoadFailed: root.topUp = null
+    onLoaded: root.rememberedLimit = Model.parseLimit(text())
+    onLoadFailed: root.rememberedLimit = 0
   }
 
   FileView {
@@ -621,7 +620,7 @@ Panel {
     printErrors: false
     watchChanges: true
     onFileChanged: reload()
-    onLoaded: root.standardLimit = Model.parseStandardLimit(text())
+    onLoaded: root.standardLimit = Model.parseLimit(text())
     onLoadFailed: root.standardLimit = 0
   }
 
@@ -769,7 +768,7 @@ Panel {
             id: heroLabels
             anchors.left: heroIcon.right
             anchors.leftMargin: Style.space(14)
-            anchors.right: root.topUpVisible ? topUpButton.left : heroValue.left
+            anchors.right: root.canSetLimit ? refreshLimitButton.left : heroValue.left
             anchors.rightMargin: Style.space(10)
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(2)
@@ -798,36 +797,71 @@ Panel {
             }
           }
 
-          // Empty iconText: the icon is Lucide's, drawn from an SVG below, and
-          // PanelActionButton is only borrowed for its hover, tooltip and click.
+          // Empty iconText on both buttons: the icons are Lucide's, drawn from
+          // SVGs below, and PanelActionButton is only borrowed for its hover,
+          // tooltip and click.
           PanelActionButton {
-            id: topUpButton
-            visible: root.topUpVisible
-            enabled: !root.topUpBusy
+            id: refreshLimitButton
+            visible: root.canSetLimit
+            enabled: !root.chargeLimitBusy
+            anchors.right: limitButton.left
+            anchors.rightMargin: Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+            foreground: root.fg
+            tooltipText: root.chargeLimitBusy
+              ? "Waiting for authentication…"
+              : ["Read the charge limit from the EC", "Asks for authentication"]
+                  .concat(root.chargeLimitErrorText ? [root.chargeLimitErrorText] : []).join("\n")
+            fontFamily: root.fontFamily
+            // Smaller than the toggle: it is the occasional "are you sure",
+            // not the action the row is about.
+            fontSize: Math.round(heroIcon.font.pixelSize * 0.6)
+            onClicked: root.refreshChargeLimit()
+
+            Image {
+              readonly property color tint: !refreshLimitButton.enabled
+                ? Qt.darker(refreshLimitButton.foreground, 2.0)
+                : (refreshLimitButton._hot ? refreshLimitButton.hoverColor : refreshLimitButton.foreground)
+              anchors.centerIn: parent
+              width: Math.round(refreshLimitButton.fontSize)
+              height: width
+              sourceSize.width: width
+              sourceSize.height: height
+              source: "data:image/svg+xml;utf8," + encodeURIComponent(Model.lucideSvg("refresh-cw", root.cssRgb(tint)))
+            }
+          }
+
+          PanelActionButton {
+            id: limitButton
+            visible: root.canSetLimit
+            enabled: !root.chargeLimitBusy
             anchors.right: heroValue.left
             anchors.rightMargin: Style.space(10)
             anchors.verticalCenter: parent.verticalCenter
             foreground: root.fg
-            tooltipText: Model.topUpTooltip(root.topUpBusy, root.topUpErrorText)
+            tooltipText: Model.chargeLimitTooltip(root.chargeLimitBusy, root.chargeLimit,
+              root.nextChargeLimit, root.probe, UPower.onBattery, root.chargeLimitErrorText)
             fontFamily: root.fontFamily
             // Sized to the battery glyph at the other end of the row, so the
             // two read as a pair rather than as a glyph and a toolbar button.
             fontSize: heroIcon.font.pixelSize
-            onClicked: root.toggleTopUp()
+            onClicked: root.toggleChargeLimit()
 
             Image {
-              readonly property color tint: !topUpButton.enabled
-                ? Qt.darker(topUpButton.foreground, 2.0)
-                : (topUpButton._hot ? topUpButton.hoverColor : topUpButton.foreground)
+              // Dimmed while busy, and also while the limit is unknown, so a
+              // guessed position never looks like a known one.
+              readonly property color tint: !limitButton.enabled || root.chargeLimit === 0
+                ? Qt.darker(limitButton.foreground, 2.0)
+                : (limitButton._hot ? limitButton.hoverColor : limitButton.foreground)
               anchors.centerIn: parent
-              // Upright, so it reads as a battery filling up towards 100%.
+              // Upright, so it reads as a battery filled to the limit.
               rotation: -90
-              width: Math.round(topUpButton.fontSize)
+              width: Math.round(limitButton.fontSize)
               height: width
               sourceSize.width: width
               sourceSize.height: height
-              source: "data:image/svg+xml;utf8," + encodeURIComponent(Model.batteryFullSvg(
-                "rgb(" + Math.round(tint.r * 255) + "," + Math.round(tint.g * 255) + "," + Math.round(tint.b * 255) + ")"))
+              source: "data:image/svg+xml;utf8," + encodeURIComponent(Model.lucideSvg(
+                root.chargeLimit === 100 ? "battery-full" : "battery-medium", root.cssRgb(tint)))
             }
           }
 

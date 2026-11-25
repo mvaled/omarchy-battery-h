@@ -18,7 +18,7 @@ make install    # symlinks this checkout into ~/.config/omarchy/plugins/ and res
 make enable     # adds the widget to the bar
 ```
 
-`make uninstall` reverses both.  The plugin reads `/sys/class/power_supply` and writes its own state files; it needs no daemon and no systemd unit, and it runs without root.  The one exception is [lifting the charge limit](#charge-to-100-once), which asks for your fingerprint or password each time.
+`make uninstall` reverses both.  The plugin reads `/sys/class/power_supply` and writes its own state files; it needs no daemon and no systemd unit, and it runs without root.  The one exception is [switching the charge limit](#charge-limit-toggle), which asks for your fingerprint or password each time.
 
 ## The main graph
 
@@ -83,29 +83,25 @@ It shows the **live charge level** by default — that is the number worth glanc
 | `health` | Capacity retention, e.g. `102%` |
 | `cycles` | Charge cycles, e.g. `2 cyc` |
 
-## Charge to 100% once
+## Charge limit toggle
 
-With a charge limit set (say 80%, to spare the pack), a long day away from a socket wants the whole battery anyway.  On a machine with [`framework_tool`](https://github.com/FrameworkComputer/framework-system) installed, the panel header has a [battery-full](https://lucide.dev/icons/battery-full) button for exactly that:
+With a charge limit set (say 80%, to spare the pack), a long day away from a socket wants the whole battery anyway.  On a machine with [`framework_tool`](https://github.com/FrameworkComputer/framework-system) installed, the panel header has a battery button that switches the limit between the standard one and 100%.  It shows [battery-full](https://lucide.dev/icons/battery-full) while the limit is 100% and [battery-medium](https://lucide.dev/icons/battery-medium) while it is the standard one, dimmed when the widget does not know which.  Each click is one write to the EC; nothing ever changes the limit on its own.
 
-1. **Click it**, and the charge limit goes to 100%.  The limit it replaced is remembered.
-2. **Charge to full, then unplug.**  The first time the pack runs off the battery after reaching full, the old limit is put back.
-Unplugging before the pack is full leaves the top-up pending, so a short trip to the next room does not undo it.  To put the old limit back early, for instance when the trip is cancelled, run `omarchy-shell io.github.mvaled.battery-health chargeFull`.
+Going back to the standard limit is deliberately left to you, because of what the Framework EC does when the limit drops below the current charge: it does not just stop charging, it runs the whole laptop from the battery, adapter still connected, until the pack is down to the new limit.  Measured on a Framework 13 at 99% on a 60 W adapter, the battery supplied about 1 A (17–18 W, the whole system load) from one second after the write, and was still at it twenty minutes later at 92%.  Switching to 80% on AC right after a full charge therefore throws the top-up away and spends a partial cycle for nothing.  The tooltip says so whenever a click would do that.  Switching back once you are on battery, or once the pack is below the standard limit, costs nothing.
 
-The button only appears when lifting the limit would do something:
+The IPC equivalents are `omarchy-shell io.github.mvaled.battery-health toggleChargeLimit` and `refreshChargeLimit`.
 
-- **Not on battery.**  Nothing charges without AC.
-- **Not full.**  At 99% or more there is nothing left to gain.
-- **Not already charging past the standard limit.**  This covers a pending top-up and a limit lifted by other means.
+### Knowing the position
 
-The last rule needs the standard limit, and without root the limit cannot be read.  The plugin learns it two ways and keeps it in `standard-limit` next to the history.  Whenever `charge-limit.sh` runs as root it records the limit `framework_tool` reports, which is authoritative.  Before that, a pack the EC is holding on AC below full (sysfs says `Not charging`) gives the limit away by where it stops; that observation can only raise the learned value, never lower it, because an EC may hold a point or two under its limit.  Until either has happened, the rule only knows about pending top-ups.
+`framework_tool` needs root even to read the limit, so the widget keeps its own record in `charge-limit` next to the history, and corrects it from what sysfs gives away.  On AC, a pack charging past the standard limit means the limit is 100%, and a pack the EC is holding at the standard limit (`Not charging`, or a point or two under it) means it is the standard one.  On battery, or while charging below the standard limit, nothing can be told apart and the record stands.  The "on AC" test uses the AC adapter's state, never the battery status, because the EC reports `Discharging` while it drains a pack down to a lowered limit.
+
+When the record is unknown or doubted (the EC can lose its setting across a power loss, and `framework_tool` can change it from a terminal), the small [refresh](https://lucide.dev/icons/refresh-cw) button next to the toggle reads the limit from the EC.  That read needs root too, so it asks for authentication as well; it never runs by itself.
+
+The standard limit itself is kept in `standard-limit`.  Every write and every refresh records it from `framework_tool`, which is authoritative.  Before the first one, a pack the EC is holding on AC below full gives it away by where it stops; that observation can only raise the learned value, never lower it, and is ignored while the limit is 100%.  With no standard limit known at all, going down from 100% sets 80%.
 
 ### Privileges
 
-The widget itself never runs as root.  `framework_tool` needs root for every EC call, reads included, so the single write is done by `charge-limit.sh set <percent>` re-entered through `pkexec`.  Omarchy's own polkit agent shows the prompt, which means fingerprint first and password as fallback, just like `sudo`.  `set` accepts only 50–100, so the prompt can never be used to write an arbitrary value.
-
-Restoring also asks.  That prompt appears at the moment you unplug, which is also the moment you are at the machine.  Dismissing it leaves the top-up pending without asking again until the next full charge; `chargeFull` over IPC still restores whenever you like.
-
-The pending top-up lives in `~/.local/state/io.github.mvaled.battery-health/charge-limit.json` and survives a shell restart.  If the EC loses the 100% setting on its own, for instance across a reboot, the file still says a top-up is pending until the next restore writes the old limit again, which is harmless.
+The widget itself never runs as root.  `framework_tool` needs root for every EC call, reads included, so each one is done by `charge-limit.sh set <percent>` or `charge-limit.sh read` re-entered through `pkexec`.  Omarchy's own polkit agent shows the prompt, which means fingerprint first and password as fallback, just like `sudo`.  `set` accepts only 50–100, so the prompt can never be used to write an arbitrary value.  Every prompt is the direct result of a click or an IPC call; dismissing one changes nothing and is not retried.
 
 ### Why not sysfs
 
@@ -118,7 +114,7 @@ Kernels since 6.12 can expose the limit as `charge_control_end_threshold` throug
 | Bar widget, left | Open the panel |
 | Bar widget, right | Cycle the readout: charge % → health % → cycles |
 | Bar widget, middle | Sample now |
-| Battery-full button | [Charge to 100% once](#charge-to-100-once) |
+| Battery button, refresh button | [Charge limit toggle](#charge-limit-toggle) |
 | Health graph, hover | Reading and date for the nearest sample |
 | Panel, `Esc` | Close · `Tab` moves to the next panel |
 
@@ -128,7 +124,8 @@ Over IPC:
 omarchy-shell io.github.mvaled.battery-health toggle
 omarchy-shell io.github.mvaled.battery-health refresh
 omarchy-shell io.github.mvaled.battery-health cycleDisplay
-omarchy-shell io.github.mvaled.battery-health chargeFull   # top up, or restore a pending top-up
+omarchy-shell io.github.mvaled.battery-health toggleChargeLimit    # standard limit <-> 100%
+omarchy-shell io.github.mvaled.battery-health refreshChargeLimit   # read the limit from the EC
 ```
 
 ## Settings
@@ -187,7 +184,7 @@ Swapping the battery pack resets the history.  The old curve describes hardware 
 
 A bar widget lives inside the same process as the rest of your desktop, so this one is built to be boring:
 
-- Exactly one sampling `Process`, never re-armed while it is still running.  A second one runs only when you click to lift the charge limit.
+- Exactly one sampling `Process`, never re-armed while it is still running.  A second one runs only when you click to set or read the charge limit.
 - Polling that follows the charge state and backs off to half-hourly when the battery is idle, instead of a fixed fast interval.
 - A 30-second floor on event-driven samples, so a burst of UPower signals cannot turn into a burst of processes.
 - Canvases repaint only while the panel is open.
@@ -202,7 +199,7 @@ A bar widget lives inside the same process as the rest of your desktop, so this 
 | `Panel.qml` | Bar button, popup, canvas rendering, Quickshell wiring |
 | `Model.js` | Probe parsing, history retention, statistics, graph geometry |
 | `probe.sh` | Reads one battery out of sysfs, emits TSV |
-| `charge-limit.sh` | Lifts and restores the charge limit through `framework_tool`; only its `set` runs as root, via `pkexec` |
+| `charge-limit.sh` | Sets and reads the charge limit through `framework_tool`; only its `set` and `read` run as root, via `pkexec` |
 | `tests/model.test.js` | `Model.js` under node |
 | `tests/probe.test.sh` | `probe.sh` against synthetic sysfs trees |
 

@@ -895,104 +895,104 @@ function timeTicks(from, to, count) {
 
 // ------------------------------------------------------------ charge limit
 
-// A pack counts as having reached full at this level rather than at exactly
-// 100%, because many firmwares stop and report 99% for a pack that is as full
-// as it will get.
-var TOPUP_FULL_PCT = 99
+// A pack counts as full at this level rather than at exactly 100%, because
+// many firmwares stop and report 99% for a pack that is as full as it will get.
+var FULL_PCT = 99
 
-// Parses the state file charge-limit.sh writes while a top-up is pending.
-// Returns null for a missing, empty or malformed file: all three mean there is
-// nothing to restore, and a malformed one is better left for charge-limit.sh
-// to overwrite than acted on.
-function parseTopUp(raw) {
-  var data
-  try {
-    data = JSON.parse(String(raw || ""))
-  } catch (e) {
-    return null
-  }
-  if (!data || typeof data !== "object") return null
-  var restore = Math.round(num(data.restore, 0))
-  var since = num(data.since, 0)
-  if (restore < 1 || restore > 100 || since <= 0) return null
-  return { restore: restore, since: since }
-}
+// The limit the toggle falls back to when going down from 100% before the
+// standard limit has ever been learned.
+var DEFAULT_STANDARD_LIMIT = 80
 
-// Whether a pending top-up has done its job and the old limit should go back:
-// the pack reached full at some point since `topUp.since`, and it is now
-// running off the battery.  Requiring the full charge first is what keeps an
-// unplug halfway through the charge from undoing the top-up; the history is
-// consulted rather than the live reading because the pack is usually below
-// full again by the time anyone unplugs.
-function topUpSpent(topUp, charge, probe) {
-  if (!topUp || !probe || !probe.ok) return false
-  if (statusCode(probe.status) !== DISCHARGING) return false
-  if (probe.pct >= TOPUP_FULL_PCT) return true
-  var since = topUp.since
-  return (charge || []).some(function (entry) {
-    return entry.t >= since && entry.p >= TOPUP_FULL_PCT
-  })
-}
+// How far under its limit an EC may hold a pack and still count as holding it
+// at that limit: some ECs stop a point or two early to avoid trickle-charging.
+var HELD_SLACK_PCT = 2
 
-// Parses the `standard-limit` file: the limit the pack is normally held at.
-// Returns 0 when it is unknown, which disables every rule that needs it.
-function parseStandardLimit(raw) {
+// Parses a bare-number limit file (`charge-limit` or `standard-limit`).
+// Returns 0 for a missing, empty or malformed file, meaning "unknown".
+function parseLimit(raw) {
   var limit = Math.round(num(String(raw || "").trim(), 0))
   return limit >= 1 && limit <= 100 ? limit : 0
 }
 
 // The limit a pack is visibly being held at, or 0.  On AC, a pack the EC has
 // stopped below full reports "Not charging", and the level it stopped at is
-// the limit.  This is how the standard limit is learned without root before
-// the first top-up ever runs.  It is only a lower bound, since an EC with
-// hysteresis may hold a point or two under its limit, so callers should only
-// ever raise a learned value with it, never lower one.
+// the limit.  It is only a lower bound, since an EC with hysteresis may hold a
+// point or two under its limit, so callers should only ever raise a learned
+// value with it, never lower one.  `onBattery` must come from the AC state,
+// not the battery status: the EC reports "Discharging" while it drains a pack
+// down to a lowered limit on AC.
 function heldLimit(probe, onBattery) {
   if (onBattery || !probe || !probe.ok) return 0
   if (String(probe.status).toLowerCase() !== "not charging") return 0
-  return probe.pct > 0 && probe.pct < TOPUP_FULL_PCT ? probe.pct : 0
+  return probe.pct > 0 && probe.pct < FULL_PCT ? probe.pct : 0
 }
 
-// Whether lifting the limit is worth offering at all.  Not on battery, where
-// nothing can charge; not on a full pack; and not while the pack is already
-// charging past its standard limit, which is true while a top-up is pending
-// and also when the limit was lifted some other way.  With no standard limit
-// known yet only the pending top-up can tell, so the last rule waits for one.
-function topUpOffered(probe, onBattery, topUp, standardLimit) {
-  if (onBattery || topUp || !probe || !probe.ok) return false
-  if (probe.pct >= TOPUP_FULL_PCT) return false
-  var charging = statusCode(probe.status) === CHARGING
-  return !(charging && standardLimit > 0 && probe.pct > standardLimit)
+// The charge limit as far as sysfs gives it away, or 0 when it does not.  On
+// AC, a pack charging past the standard limit means the limit is 100%, and a
+// pack held at the standard limit (or within HELD_SLACK_PCT under it) means
+// the limit is the standard one.  On battery, below the standard limit while
+// charging, or with the standard limit unknown, nothing can be told apart.
+function inferLimit(probe, onBattery, standardLimit) {
+  if (onBattery || !probe || !probe.ok || !(standardLimit > 0)) return 0
+  if (statusCode(probe.status) === CHARGING && probe.pct > standardLimit) return 100
+  var held = heldLimit(probe, onBattery)
+  return held > 0 && held <= standardLimit && held >= standardLimit - HELD_SLACK_PCT
+    ? standardLimit
+    : 0
 }
 
-// The tooltip for the top-up button, which doubles as its only status line.
-function topUpTooltip(busy, error) {
+// The limit a click on the toggle sets: 100% from anything but 100%, which
+// includes an unknown limit, and the standard limit from 100%.
+function nextLimit(current, standardLimit) {
+  if (current !== 100) return 100
+  return standardLimit >= 50 && standardLimit < 100 ? standardLimit : DEFAULT_STANDARD_LIMIT
+}
+
+// The tooltip for the toggle, which doubles as its only status line.  Lowering
+// the limit under the current charge on AC gets a warning, because the EC then
+// runs the laptop from the battery until it is down to the new limit.
+function chargeLimitTooltip(busy, current, next, probe, onBattery, error) {
   if (busy) return "Waiting for authentication…"
-  var lines = ["Charge to 100% once", "Lifts the charge limit until the next unplug after a full charge"]
+  var lines = [
+    "Charge limit: " + (current > 0 ? current + "%" : "unknown"),
+    "Click to set " + next + "%"
+  ]
+  if (!onBattery && probe && probe.ok && next < probe.pct)
+    lines.push("The laptop will then run from the battery down to " + next + "%")
   if (error) lines.push(error)
   return lines.join("\n")
 }
 
-// charge-limit.sh's exit codes, worded for the tooltip.  0 has no message.
-function topUpError(code) {
+// charge-limit.sh's exit codes, worded for the tooltips.  0 has no message.
+function chargeLimitError(code) {
   if (code === 0) return ""
-  if (code === 126 || code === 127) return "Not authorized: the limit was not changed"
+  if (code === 126 || code === 127) return "Not authorized: the charge limit was not touched"
   if (code === 3) return "framework_tool could not read the charge limit"
   if (code === 4) return "The EC did not accept the new charge limit"
   return "charge-limit.sh failed (exit " + code + ")"
 }
 
-// Lucide's battery-full icon (https://lucide.dev/icons/battery-full), ISC
-// licence, copyright (c) Lucide Contributors 2022, portions copyright (c) Cole
-// Bemis 2013-2022 as part of Feather (MIT).  Inlined as a string rather than
-// shipped as a file so the stroke can take the theme colour: an SVG loaded by
-// Image cannot be recoloured without a shader, but one built here can simply
-// be written in the right colour.
-function batteryFullSvg(cssColor) {
+// Lucide icons (https://lucide.dev), ISC licence, copyright (c) Lucide
+// Contributors 2022, portions copyright (c) Cole Bemis 2013-2022 as part of
+// Feather (MIT).  Inlined as strings rather than shipped as files so the
+// stroke can take the theme colour: an SVG loaded by Image cannot be
+// recoloured without a shader, but one built here can simply be written in the
+// right colour.
+var LUCIDE_PATHS = {
+  "battery-full": '<path d="M10 10v4"/><path d="M14 10v4"/><path d="M22 14v-4"/><path d="M6 10v4"/>' +
+    '<rect x="2" y="6" width="16" height="12" rx="2"/>',
+  "battery-medium": '<path d="M10 14v-4"/><path d="M22 14v-4"/><path d="M6 14v-4"/>' +
+    '<rect x="2" y="6" width="16" height="12" rx="2"/>',
+  "refresh-cw": '<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>' +
+    '<path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>'
+}
+
+// The Lucide icon `name` (one of LUCIDE_PATHS) as an SVG document stroked in
+// `cssColor`.  An unknown name yields an empty icon rather than an error.
+function lucideSvg(name, cssColor) {
   return '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" ' +
     'fill="none" stroke="' + cssColor + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M10 10v4"/><path d="M14 10v4"/><path d="M22 14v-4"/><path d="M6 10v4"/>' +
-    '<rect x="2" y="6" width="16" height="12" rx="2"/></svg>'
+    (LUCIDE_PATHS[name] || "") + '</svg>'
 }
 
 if (typeof module !== "undefined") {
@@ -1054,14 +1054,13 @@ if (typeof module !== "undefined") {
     axisTicks: axisTicks,
     timeTicks: timeTicks,
     shortDate: shortDate,
-    TOPUP_FULL_PCT: TOPUP_FULL_PCT,
-    parseTopUp: parseTopUp,
-    topUpSpent: topUpSpent,
-    parseStandardLimit: parseStandardLimit,
+    FULL_PCT: FULL_PCT,
+    parseLimit: parseLimit,
     heldLimit: heldLimit,
-    topUpOffered: topUpOffered,
-    topUpTooltip: topUpTooltip,
-    topUpError: topUpError,
-    batteryFullSvg: batteryFullSvg
+    inferLimit: inferLimit,
+    nextLimit: nextLimit,
+    chargeLimitTooltip: chargeLimitTooltip,
+    chargeLimitError: chargeLimitError,
+    lucideSvg: lucideSvg
   }
 }
